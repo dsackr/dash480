@@ -52,9 +52,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     node_name = entry.data["node_name"]
     home_title = entry.options.get("home_title", node_name)
     temp_entity = entry.options.get("temp_entity", "")
-    pages_count = int(entry.options.get("pages", 1))
-    # control map (id -> entity_id)
+    # control map (id -> entity_id) and sensor text map (entity -> list of (page,id))
     hass.data[DOMAIN][entry.entry_id]["ctrl_map"] = {}
+    hass.data[DOMAIN][entry.entry_id]["sensor_map"] = {}
 
     # helper to publish current temp to header right label (p0b3)
     async def _publish_temp(value: str) -> None:
@@ -88,39 +88,77 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         lines = _home_layout_lines(node_name, home_title, tval)
         for line in lines:
             await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", line)
-        # Pages based on options
-        ctrl_map: dict[str, str] = {}
-        pages = int(entry.options.get("pages", 1))
-        # prev/next ring
+        # Build page list from Page entries linked to this panel
+        all_entries = hass.config_entries.async_entries(DOMAIN)
+        page_entries = [e for e in all_entries if e.data.get("role") == "page" and e.data.get("panel_entry_id") == entry.entry_id]
+        page_entries.sort(key=lambda e: int(e.data.get("page_order", 99)))
+        page_numbers = [int(e.data.get("page_order", 99)) for e in page_entries]
+        # include home page 1 at start for wrap math
+        pages_ring = [1] + page_numbers
         def pprev(p):
-            return pages if p == 1 else p - 1
+            idx = pages_ring.index(p)
+            return pages_ring[(idx - 1) % len(pages_ring)]
         def pnext(p):
-            return 1 if p == pages else p + 1
-        for p in range(1, pages + 1):
+            idx = pages_ring.index(p)
+            return pages_ring[(idx + 1) % len(pages_ring)]
+        # Draw each page
+        ctrl_map: dict[str, str] = {}
+        sensor_map: dict[str, list[tuple[int,int]]] = {}
+        for pe in page_entries:
+            p = int(pe.data.get("page_order", 99))
+            title = pe.options.get("title", f"Page {p}")
             await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"id":0,"obj":"page","prev":{pprev(p)},"next":{pnext(p)}}}')
-            # background
             await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":800,"x":0,"y":56,"w":480,"h":424,"bg_color":"#0B1220"}}')
-            # slots 1..6
-            for idx in range(1, 7):
-                key = f"p{p}_s{idx}"
-                ent = str(entry.options.get(key, ""))
-                if not ent or ent in ("unknown", "unavailable"):
+            # page title update will occur on page change via router
+            # slots
+            slot_keys = [k for k in pe.options.keys() if k.startswith("s")] or []
+            # stable order s1..s12
+            for idx in range(1, 13):
+                key = f"s{idx}"
+                ent = pe.options.get(key, "")
+                if not ent:
                     continue
-                # grid position (2 rows x 3 cols)
                 i0 = idx - 1
                 col = i0 % 3
                 row = i0 // 3
                 x = 40 + col * 160
                 y = 120 + row * 140
                 base = p * 1000 + i0 * 10
-                label = hass.states.get(ent).attributes.get("friendly_name", ent) if hass.states.get(ent) else ent
-                # tile background + label
+                st_ent = hass.states.get(ent)
+                label = st_ent.attributes.get("friendly_name", ent) if st_ent else ent
                 await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":{base+1},"x":{x},"y":{y},"w":128,"h":120,"radius":14,"bg_color":"#1E293B"}}')
                 await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"label","id":{base},"x":{x+8},"y":{y+8},"w":112,"h":22,"text":"{label}","text_font":18,"text_color":"#9CA3AF","bg_opa":0}}')
-                # toggle button
-                await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btn","id":{base+2},"x":{x+20},"y":{y+40},"w":88,"h":64,"text":"\\uE425","text_font":64,"toggle":true,"radius":12,"bg_color":"#1E293B","text_color":"#FFFFFF","border_width":0}}')
-                ctrl_map[f"p{p}b{base+2}"] = ent
+                domain = ent.split(".")[0]
+                if domain in ("switch", "light", "fan"):
+                    await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btn","id":{base+2},"x":{x+20},"y":{y+40},"w":88,"h":64,"text":"\\uE425","text_font":64,"toggle":true,"radius":12,"bg_color":"#1E293B","text_color":"#FFFFFF","border_width":0}}')
+                    ctrl_map[f"p{p}b{base+2}"] = ent
+                elif domain == "sensor":
+                    # invisible button to hold value text (more reliable updates than label)
+                    val = st_ent.state if st_ent and st_ent.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, "") else "--"
+                    await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btn","id":{base+2},"x":{x+20},"y":{y+40},"w":88,"h":64,"text":"{val}","text_font":20,"toggle":false,"bg_opa":0,"border_width":0,"radius":0}}')
+                    sensor_map.setdefault(ent, []).append((p, base+2))
         hass.data[DOMAIN][entry.entry_id]["ctrl_map"] = ctrl_map
+        hass.data[DOMAIN][entry.entry_id]["sensor_map"] = sensor_map
+        # rewire sensor listeners
+        # remove previous
+        for key in list(hass.data[DOMAIN][entry.entry_id].keys()):
+            if key.startswith("unsub_sensor_"):
+                u = hass.data[DOMAIN][entry.entry_id].pop(key)
+                try:
+                    u()
+                except Exception:
+                    pass
+        for ent, targets in sensor_map.items():
+            async def _make_cb(eid: str):
+                async def _cb(event):
+                    st = hass.states.get(eid)
+                    val = st.state if st and st.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, "") else "--"
+                    for (pnum, bid) in sensor_map.get(eid, []):
+                        await mqtt.async_publish(hass, f"hasp/{node_name}/command/p{pnum}b{bid}.text", val)
+                return _cb
+            cb = await _make_cb(ent)
+            unsub = async_track_state_change_event(hass, [ent], cb)
+            hass.data[DOMAIN][entry.entry_id][f"unsub_sensor_{ent}"] = unsub
 
     # Define the callback for when the device comes online
     @callback
@@ -187,7 +225,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             page = str(msg.payload)
             if page.isdigit():
                 p = int(page)
-                title = entry.options.get(f"p{p}_title", home_title if p == 1 else f"Page {p}")
+                # Resolve title from Page entries map
+                all_entries = hass.config_entries.async_entries(DOMAIN)
+                page_entry = next((e for e in all_entries if e.data.get("role") == "page" and e.data.get("panel_entry_id") == entry.entry_id and int(e.data.get("page_order", 0)) == p), None)
+                title = home_title if p == 1 else (page_entry.options.get("title", f"Page {p}") if page_entry else f"Page {p}")
                 hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p0b2.text", title))
 
     unsub_events = await mqtt.async_subscribe(hass, f"hasp/{node_name}/state/#", _state_event)
