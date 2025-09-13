@@ -15,7 +15,9 @@ async def async_setup_entry(
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    async_add_entities([Dash480PagesNumber(hass, config_entry)])
+    # Only for Panel entries
+    if config_entry.data.get("role", "panel") == "panel":
+        async_add_entities([Dash480PagesNumber(hass, config_entry)])
 
 
 class Dash480PagesNumber(NumberEntity):

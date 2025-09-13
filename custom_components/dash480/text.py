@@ -13,15 +13,19 @@ async def async_setup_entry(
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up the Dash480 text entities."""
+    """Set up text entities for Panel or Page entries."""
+    role = config_entry.data.get("role", "panel")
     entities: list[TextEntity] = []
-    entities.append(Dash480NodeNameText(hass, config_entry))
-    entities.append(Dash480HomeTitleText(hass, config_entry))
-    entities.append(Dash480TempEntityText(hass, config_entry))
-    # Page titles and slots (1..6 pages, 6 slots each)
-    for p in range(1, 7):
+    if role == "panel":
+        entities.append(Dash480NodeNameText(hass, config_entry))
+        entities.append(Dash480HomeTitleText(hass, config_entry))
+        entities.append(Dash480TempEntityText(hass, config_entry))
+    else:
+        # Page-specific title and slots
+        p = int(config_entry.data.get("page_order", 2))
         entities.append(Dash480PageTitleText(hass, config_entry, p))
-        for s in range(1, 7):
+        # Provide 12 slots (auto-grid); options may be empty
+        for s in range(1, 13):
             entities.append(Dash480SlotEntityText(hass, config_entry, p, s))
     async_add_entities(entities)
 
@@ -71,14 +75,21 @@ class _BaseDashText(TextEntity):
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry) -> None:
         self.hass = hass
         self.config_entry = config_entry
-        node = config_entry.data["node_name"]
-        self._device_identifier = f"dash480_{node}"
+        role = config_entry.data.get("role", "panel")
+        if role == "panel":
+            node = config_entry.data["node_name"]
+            self._device_identifier = f"dash480_{node}"
+            self._device_name = f"Dash480 ({node})"
+        else:
+            p = int(config_entry.data.get("page_order", 2))
+            self._device_identifier = f"dash480_page_{config_entry.entry_id}"
+            self._device_name = f"Dash480 Page {p}"
 
     @property
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(
             identifiers={(DOMAIN, self._device_identifier)},
-            name=f"Dash480 ({self.config_entry.data['node_name']})",
+            name=self._device_name,
             manufacturer="openHASP",
             model="ESP32-S3 480x480",
         )
@@ -130,7 +141,7 @@ class Dash480PageTitleText(_BaseDashText):
         super().__init__(hass, config_entry)
         self.page = page
         self._attr_name = f"P{page} Title"
-        self._attr_unique_id = f"{self._device_identifier}_p{page}_title"
+        self._attr_unique_id = f"{self._device_identifier}_title"
         self._attr_native_value = config_entry.options.get(f"p{page}_title", f"Page {page}")
 
     async def async_set_value(self, value: str) -> None:
@@ -148,12 +159,13 @@ class Dash480SlotEntityText(_BaseDashText):
         super().__init__(hass, config_entry)
         self.page = page
         self.slot = slot
-        self._attr_name = f"P{page} Slot {slot} Entity"
-        self._attr_unique_id = f"{self._device_identifier}_p{page}_s{slot}"
-        self._attr_native_value = config_entry.options.get(f"p{page}_s{slot}", "")
+        self._attr_name = f"Slot {slot} Entity"
+        self._attr_unique_id = f"{self._device_identifier}_s{slot}"
+        # For page entries, options keys are s1..sN
+        self._attr_native_value = config_entry.options.get(f"s{slot}", "")
 
     async def async_set_value(self, value: str) -> None:
-        key = f"p{self.page}_s{self.slot}"
+        key = f"s{self.slot}"
         opts = {**self.config_entry.options, key: value}
         self.hass.config_entries.async_update_entry(self.config_entry, options=opts)
         self._attr_native_value = value
