@@ -149,20 +149,43 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return None
 
     async def _svc_set_home_title(call: ServiceCall):
+        nonlocal home_title
         e = await _resolve_entry(call)
         if not e:
             return
         title = str(call.data.get("home_title", "")).strip()
+        # Persist on entry options
         new_opts = {**e.options, "home_title": title or e.data.get("node_name", "Dash")}
         hass.config_entries.async_update_entry(e, options=new_opts)
+        # Update local cache and live header immediately
+        home_title = new_opts["home_title"]
+        await mqtt.async_publish(hass, f"hasp/{node_name}/command/p0b2.text", home_title)
 
     async def _svc_set_temp_entity(call: ServiceCall):
+        nonlocal temp_entity
         e = await _resolve_entry(call)
         if not e:
             return
         temp = str(call.data.get("temp_entity", "")).strip()
         new_opts = {**e.options, "temp_entity": temp}
         hass.config_entries.async_update_entry(e, options=new_opts)
+        # Update subscription to new entity and push current value to header
+        temp_entity = temp
+        # tear down old tracker if present
+        unsub_temp_prev = hass.data[DOMAIN][entry.entry_id].get("unsub_temp")
+        if unsub_temp_prev:
+            unsub_temp_prev()
+            hass.data[DOMAIN][entry.entry_id]["unsub_temp"] = None
+        # publish current value
+        val = "--"
+        st = hass.states.get(temp_entity) if temp_entity else None
+        if st and st.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, ""):
+            val = str(st.state)
+        await _publish_temp(val)
+        # re-subscribe for future updates
+        if temp_entity:
+            unsub_temp_new = async_track_state_change_event(hass, [temp_entity], _on_temp_change)
+            hass.data[DOMAIN][entry.entry_id]["unsub_temp"] = unsub_temp_new
 
     async def _svc_publish_home(call: ServiceCall):
         await _push_home_layout()
