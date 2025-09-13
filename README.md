@@ -87,3 +87,22 @@ For the relays to function, ensure you have configured the outputs in your openH
 
 - When the device publishes `hasp/<node>/LWT` with payload `online`, the integration pushes a basic JSONL layout to `hasp/<node>/command/jsonl`.
 - The layout is sent line-by-line (one JSON object per publish), which is compatible with openHASP’s JSONL command handling.
+## Branding (Icons)
+
+This repo includes SVG sources you can export to PNG for Home Assistant Brands:
+
+- `branding/icon.svg` → export as transparent `icon.png` 256×256 (and optional `icon@2x.png` 512×512)
+- `branding/logo.svg` → export as transparent `logo.png` 256×256 (and optional `logo@2x.png` 512×512)
+
+Export with Inkscape (example):
+
+```
+inkscape branding/icon.svg -w 256 -h 256 -o icon.png
+inkscape branding/logo.svg -w 256 -h 256 -o logo.png
+```
+
+Submit to the Home Assistant Brands repo:
+
+- Fork https://github.com/home-assistant/brands
+- Add files under `custom_integrations/dash480/`: `icon.png`, `logo.png` (and optional `@2x` variants)
+- Open a PR; once merged, HA will display the icon/logo in Integrations and HACS.
