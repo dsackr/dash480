@@ -31,10 +31,10 @@ def _home_layout_lines(node_name: str, title: str, temp_text: str) -> list[str]:
     lines.append('{"page":0,"id":92,"obj":"btn","action":{"down": "page next"},"x":340,"y":430,"w":120,"h":50,"bg_color":"#2C3E50","text":"\\uE142","text_color":"#FFFFFF","radius":0,"border_side":0,"text_font":48}')
     # Home page background area
     lines.append('{"page":1,"obj":"obj","id":800,"x":0,"y":56,"w":480,"h":424,"bg_color":"#0B1220"}')
-    # Three relay buttons (IDs 101/111/121)
-    lines.append('{"page":1,"obj":"btn","id":101,"x":40,"y":120,"w":120,"h":72,"text":"Relay 1","text_font":22,"toggle":true,"radius":12,"bg_color":"#374151","text_color":"#FFFFFF","border_width":0}')
-    lines.append('{"page":1,"obj":"btn","id":111,"x":180,"y":120,"w":120,"h":72,"text":"Relay 2","text_font":22,"toggle":true,"radius":12,"bg_color":"#374151","text_color":"#FFFFFF","border_width":0}')
-    lines.append('{"page":1,"obj":"btn","id":121,"x":320,"y":120,"w":120,"h":72,"text":"Relay 3","text_font":22,"toggle":true,"radius":12,"bg_color":"#374151","text_color":"#FFFFFF","border_width":0}')
+    # Three relay buttons (IDs 12/22/32) using working layout
+    lines.append('{"page":1,"obj":"btn","id":12,"x":25,"y":300,"w":120,"h":60,"text":"Relay 1","text_font":26,"toggle":true,"groupid":1,"radius":8,"bg_color":"#374151","text_color":"#FFFFFF","border_width":0}')
+    lines.append('{"page":1,"obj":"btn","id":22,"x":175,"y":300,"w":120,"h":60,"text":"Relay 2","text_font":26,"toggle":true,"groupid":2,"radius":8,"bg_color":"#374151","text_color":"#FFFFFF","border_width":0}')
+    lines.append('{"page":1,"obj":"btn","id":32,"x":325,"y":300,"w":120,"h":60,"text":"Relay 3","text_font":26,"toggle":true,"groupid":3,"radius":8,"bg_color":"#374151","text_color":"#FFFFFF","border_width":0}')
     return lines
 
 
@@ -58,6 +58,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     def push_layout(msg):
         """Handle device online message and push layout."""
         if msg.payload == "online":
+            # Clear device pages first to remove local pages.jsonl
+            hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/clearpage", "all"))
             # Build home layout with header/footer and 3 relays
             temp_text = ""
             if temp_entity:
@@ -98,13 +100,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         val = data.get("val", -1)
         # Relay button routing on 'up'
         if event == "up":
-            if topic_tail == "p1b101":
+            if topic_tail == "p1b12":
                 payload = '{"state":"on"}' if val == 1 else '{"state":"off"}'
                 hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/output1", payload))
-            elif topic_tail == "p1b111":
+            elif topic_tail == "p1b22":
                 payload = '{"state":"on"}' if val == 1 else '{"state":"off"}'
                 hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/output2", payload))
-            elif topic_tail == "p1b121":
+            elif topic_tail == "p1b32":
                 payload = '{"state":"on"}' if val == 1 else '{"state":"off"}'
                 hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/output40", payload))
         # Title on page change (only page 1 for now)

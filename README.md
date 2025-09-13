@@ -43,7 +43,14 @@ This custom integration provides seamless integration for a 480x480 openHASP dis
     -   You will be asked for the **Node Name**. This is the MQTT hostname of your openHASP device (e.g., `plate`).
     -   Click **Submit**.
 
-3.  **Device Creation**:
+3.  **Configure Title and Temp (Options)**:
+    - Go to **Settings** > **Devices & Services** > find **Dash480** > click **Configure**.
+    - Set:
+      - **Home Title**: shown in the header center (defaults to the node name).
+      - **Temp Entity**: an HA sensor (e.g., `sensor.living_temp`) shown on the right side of the header.
+    - Save. The layout is pushed on device online; power‑cycle the panel or briefly disconnect/reconnect Wi‑Fi to trigger LWT `online`.
+
+4.  **Device Creation**:
     -   The integration will be added, and you will see a new "Dash480" device with its associated entities (relays and node name).
 
 ## Usage
