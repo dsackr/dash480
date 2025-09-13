@@ -38,6 +38,13 @@ def _home_layout_lines(node_name: str, title: str, temp_text: str) -> list[str]:
     return lines
 
 
+async def async_get_options_flow(entry: ConfigEntry):
+    """Expose options flow to HA (wrapper around options_flow module)."""
+    from .options_flow import Dash480OptionsFlowHandler  # local import
+
+    return Dash480OptionsFlowHandler(entry)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Dash480 from a config entry."""
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {}
