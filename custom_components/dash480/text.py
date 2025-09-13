@@ -2,7 +2,7 @@
 from homeassistant.components.text import TextEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
@@ -29,7 +29,7 @@ async def async_setup_entry(
 class Dash480NodeNameText(TextEntity):
     """Representation of the node name configuration text entity."""
 
-    _attr_entity_category = "config"
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry) -> None:
         """Initialize the text entity."""
@@ -87,7 +87,7 @@ class _BaseDashText(TextEntity):
 class Dash480HomeTitleText(_BaseDashText):
     """Header title text (center)."""
 
-    _attr_entity_category = "config"
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry) -> None:
         super().__init__(hass, config_entry)
@@ -108,7 +108,7 @@ class Dash480HomeTitleText(_BaseDashText):
 class Dash480TempEntityText(_BaseDashText):
     """Header temperature entity (entity_id string)."""
 
-    _attr_entity_category = "config"
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry) -> None:
         super().__init__(hass, config_entry)
@@ -124,7 +124,7 @@ class Dash480TempEntityText(_BaseDashText):
 
 
 class Dash480PageTitleText(_BaseDashText):
-    _attr_entity_category = "config"
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, page: int) -> None:
         super().__init__(hass, config_entry)
@@ -142,7 +142,7 @@ class Dash480PageTitleText(_BaseDashText):
 
 
 class Dash480SlotEntityText(_BaseDashText):
-    _attr_entity_category = "config"
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, page: int, slot: int) -> None:
         super().__init__(hass, config_entry)

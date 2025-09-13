@@ -1,0 +1,57 @@
+set_home_title:
+  name: Set Home Title
+  description: Set the header title shown at the top of the panel.
+  fields:
+    entry_id:
+      description: Optional config entry id (if multiple Dash480 entries exist)
+      example: 1234567890abcdef
+      required: false
+      selector:
+        text:
+    home_title:
+      description: The title to show in the header center.
+      example: Dash
+      required: true
+      selector:
+        text:
+
+set_temp_entity:
+  name: Set Temp Entity
+  description: Set the HA sensor entity used for the header right temperature/value.
+  fields:
+    entry_id:
+      description: Optional config entry id (if multiple Dash480 entries exist)
+      example: 1234567890abcdef
+      required: false
+      selector:
+        text:
+    temp_entity:
+      description: Entity id of a sensor to display.
+      example: sensor.living_room_temperature
+      required: true
+      selector:
+        entity:
+          domain: sensor
+
+publish_home:
+  name: Publish Home
+  description: Clear the device and publish the header/footer and home page relays only.
+  fields:
+    entry_id:
+      description: Optional config entry id (if multiple Dash480 entries exist)
+      example: 1234567890abcdef
+      required: false
+      selector:
+        text:
+
+publish_all:
+  name: Publish All Pages
+  description: Clear the device and publish all pages from the config entities.
+  fields:
+    entry_id:
+      description: Optional config entry id (if multiple Dash480 entries exist)
+      example: 1234567890abcdef
+      required: false
+      selector:
+        text:
+

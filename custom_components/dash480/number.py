@@ -4,7 +4,7 @@ from __future__ import annotations
 from homeassistant.components.number import NumberEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
@@ -19,7 +19,7 @@ async def async_setup_entry(
 
 
 class Dash480PagesNumber(NumberEntity):
-    _attr_entity_category = "config"
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry) -> None:
         self.hass = hass
@@ -48,4 +48,3 @@ class Dash480PagesNumber(NumberEntity):
         self.hass.config_entries.async_update_entry(self.config_entry, options=opts)
         self._attr_native_value = val
         self.async_write_ha_state()
-

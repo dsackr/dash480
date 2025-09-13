@@ -143,14 +143,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     @callback
     def _state_event(msg):
         topic_tail = msg.topic.split("/")[-1]
+        data = None
         try:
             import json
-
             data = json.loads(msg.payload)
         except Exception:
-            data = {}
-        event = str(data.get("event", ""))
-        val = data.get("val", -1)
+            data = None
+        if isinstance(data, dict):
+            event = str(data.get("event", ""))
+            val = data.get("val", -1)
+        else:
+            event = ""
+            val = -1
         # Relay button routing on 'up'
         if event == "up":
             if topic_tail == "p1b12":
