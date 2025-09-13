@@ -6,6 +6,7 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant import config_entries
+from homeassistant.helpers.selector import selector
 from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
@@ -24,10 +25,10 @@ class Dash480OptionsFlowHandler(config_entries.OptionsFlow):
             {
                 vol.Optional(
                     "home_title", default=options.get("home_title", self.config_entry.data.get("node_name", "Dash"))
-                ): str,
+                ): selector({"text": {}}),
                 vol.Optional(
                     "temp_entity", default=options.get("temp_entity", "")
-                ): str,
+                ): selector({"entity": {"domain": "sensor"}}),
             }
         )
         return self.async_show_form(step_id="init", data_schema=data_schema)
@@ -35,4 +36,3 @@ class Dash480OptionsFlowHandler(config_entries.OptionsFlow):
 
 async def async_get_options_flow(config_entry: config_entries.ConfigEntry):
     return Dash480OptionsFlowHandler(config_entry)
-

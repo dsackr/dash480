@@ -137,6 +137,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         unsub_temp = async_track_state_change_event(hass, [temp_entity], _on_temp_change)
         hass.data[DOMAIN][entry.entry_id]["unsub_temp"] = unsub_temp
 
+    # React to options changes (from Configure dialog or services)
+    async def _options_updated(hass_: HomeAssistant, updated: ConfigEntry):
+        nonlocal home_title, temp_entity
+        home_title = updated.options.get("home_title", updated.data.get("node_name", "Dash"))
+        new_temp = updated.options.get("temp_entity", "")
+        if new_temp != temp_entity:
+            # resubscribe to temp entity changes
+            unsub_prev = hass.data[DOMAIN][entry.entry_id].get("unsub_temp")
+            if unsub_prev:
+                unsub_prev()
+                hass.data[DOMAIN][entry.entry_id]["unsub_temp"] = None
+            temp_entity = new_temp
+            if temp_entity:
+                unsub_new = async_track_state_change_event(hass, [temp_entity], _on_temp_change)
+                hass.data[DOMAIN][entry.entry_id]["unsub_temp"] = unsub_new
+            # push current temp immediately
+            st = hass.states.get(temp_entity) if temp_entity else None
+            val = "--"
+            if st and st.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, ""):
+                val = str(st.state)
+            await _publish_temp(val)
+        # Update title immediately
+        await mqtt.async_publish(hass, f"hasp/{node_name}/command/p0b2.text", home_title)
+
+    unsub_update = entry.add_update_listener(_options_updated)
+    hass.data[DOMAIN][entry.entry_id]["unsub_update"] = unsub_update
+
     # Services: allow setting options and forcing a publish when UI Configure is unavailable
     async def _resolve_entry(call: ServiceCall) -> ConfigEntry | None:
         eid = call.data.get("entry_id")
@@ -227,6 +254,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unsub_temp = hass.data[DOMAIN][entry.entry_id].get("unsub_temp")
     if unsub_temp:
         unsub_temp()
+    unsub_update = hass.data[DOMAIN][entry.entry_id].get("unsub_update")
+    if unsub_update:
+        unsub_update()
 
     # Forward the unload to the platforms.
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
