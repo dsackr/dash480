@@ -25,10 +25,10 @@ def _home_layout_lines(node_name: str, title: str, temp_text: str) -> list[str]:
     # Right temp (p0b3)
     tt = temp_text.replace('"', '\\"') if temp_text else "--"
     lines.append(f'{{"page":0,"id":3,"obj":"btn","x":320,"y":8,"w":148,"h":40,"text":"{tt}","text_font":24,"align":"right","text_color":"#E5E7EB","bg_opa":0,"border_width":0,"radius":0,"outline_width":0,"shadow_width":0,"toggle":false}}')
-    # Footer navigation (page 0)
-    lines.append('{"page":0,"id":90,"obj":"btn","action":{"down": "page prev"},"x":0,"y":430,"w":120,"h":50,"bg_color":"#2C3E50","text":"\\uE141","text_color":"#FFFFFF","radius":0,"border_side":0,"text_font":48}')
-    lines.append('{"page":0,"id":91,"obj":"btn","action":{"down": "page 1"},"x":120,"y":430,"w":240,"h":50,"bg_color":"#2C3E50","text":"\\uE2DC","text_color":"#FFFFFF","radius":0,"border_side":0,"text_font":48}')
-    lines.append('{"page":0,"id":92,"obj":"btn","action":{"down": "page next"},"x":340,"y":430,"w":120,"h":50,"bg_color":"#2C3E50","text":"\\uE142","text_color":"#FFFFFF","radius":0,"border_side":0,"text_font":48}')
+    # Footer navigation (page 0) — span full 480px (3x160)
+    lines.append('{"page":0,"id":90,"obj":"btn","action":{"down": "page prev"},"x":0,"y":430,"w":160,"h":50,"bg_color":"#2C3E50","text":"\\uE141","text_color":"#FFFFFF","radius":0,"border_side":0,"text_font":48}')
+    lines.append('{"page":0,"id":91,"obj":"btn","action":{"down": "page 1"},"x":160,"y":430,"w":160,"h":50,"bg_color":"#2C3E50","text":"\\uE2DC","text_color":"#FFFFFF","radius":0,"border_side":0,"text_font":48}')
+    lines.append('{"page":0,"id":92,"obj":"btn","action":{"down": "page next"},"x":320,"y":430,"w":160,"h":50,"bg_color":"#2C3E50","text":"\\uE142","text_color":"#FFFFFF","radius":0,"border_side":0,"text_font":48}')
     # Home page background area
     lines.append('{"page":1,"obj":"obj","id":800,"x":0,"y":56,"w":480,"h":424,"bg_color":"#0B1220"}')
     # Three relay buttons (IDs 12/22/32) using working layout
