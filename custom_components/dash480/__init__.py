@@ -190,14 +190,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id]["unsub_events"] = unsub_events
 
     # Track temp entity changes
-    def _on_temp_change(event):
+    async def _on_temp_change(event):
         if not temp_entity:
             return
         st = hass.states.get(temp_entity)
         val = "--"
         if st and st.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, ""):
             val = str(st.state)
-        hass.async_create_task(_publish_temp(val))
+        await _publish_temp(val)
 
     if temp_entity:
         unsub_temp = async_track_state_change_event(hass, [temp_entity], _on_temp_change)
