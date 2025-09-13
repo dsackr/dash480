@@ -71,7 +71,8 @@ class Dash480RelaySwitch(SwitchEntity):
         self._state = False
         self._attr_unique_id = f"{device_identifier}_relay_{group_id}"
         self._attr_name = name
-        self._command_topic = f"hasp/{node_name}/command/group{group_id}"
+        # Use direct output command topic with JSON payloads, matching openHASP expectations
+        self._command_topic = f"hasp/{node_name}/command/output{output_id}"
         self._state_topic = f"hasp/{node_name}/state/output{output_id}"
 
     @property
@@ -93,11 +94,14 @@ class Dash480RelaySwitch(SwitchEntity):
             try:
                 payload = msg.payload
                 # state messages are JSON like {"state":"on"}
-                if payload.startswith("{"):
-                    # naive parse to avoid json import overhead
-                    self._state = '"state":"on"' in payload or '"state": "on"' in payload
+                if payload and payload.strip().startswith("{"):
+                    import json
+
+                    data = json.loads(payload)
+                    st = str(data.get("state", "")).lower()
+                    self._state = st == "on"
                 else:
-                    self._state = payload in ("1", "on", "ON", "true", "True")
+                    self._state = str(payload).lower() in ("1", "on", "true")
             except Exception:
                 return
             self.async_write_ha_state()
@@ -111,7 +115,9 @@ class Dash480RelaySwitch(SwitchEntity):
             unsub()
 
     async def async_turn_on(self, **kwargs) -> None:
-        await mqtt.async_publish(self.hass, self._command_topic, "1")
+        # Command expects JSON payload: {"state":"on"}
+        await mqtt.async_publish(self.hass, self._command_topic, '{"state":"on"}')
 
     async def async_turn_off(self, **kwargs) -> None:
-        await mqtt.async_publish(self.hass, self._command_topic, "0")
+        # Command expects JSON payload: {"state":"off"}
+        await mqtt.async_publish(self.hass, self._command_topic, '{"state":"off"}')
