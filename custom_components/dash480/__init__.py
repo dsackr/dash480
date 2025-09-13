@@ -1,9 +1,10 @@
 """The Dash480 integration."""
 from homeassistant.components import mqtt
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant, callback, ServiceCall
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
+import voluptuous as vol
 
 from .const import DOMAIN
 
@@ -60,28 +61,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             value if value else "--",
         )
 
+    async def _push_home_layout() -> None:
+        """Clear and push header/footer + home relays."""
+        # Clear existing pages first
+        await mqtt.async_publish(hass, f"hasp/{node_name}/command/clearpage", "all")
+        temp_text = ""
+        if temp_entity:
+            st = hass.states.get(temp_entity)
+            if st and st.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, ""):
+                temp_text = str(st.state)
+        lines = _home_layout_lines(node_name, home_title, temp_text)
+        for line in lines:
+            await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", line)
+
     # Define the callback for when the device comes online
     @callback
     def push_layout(msg):
         """Handle device online message and push layout."""
         if msg.payload == "online":
-            # Clear device pages first to remove local pages.jsonl
-            hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/clearpage", "all"))
-            # Build home layout with header/footer and 3 relays
-            temp_text = ""
-            if temp_entity:
-                st = hass.states.get(temp_entity)
-                if st and st.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, ""):
-                    temp_text = str(st.state)
-            lines = _home_layout_lines(node_name, home_title, temp_text)
-            for line in lines:
-                hass.async_create_task(
-                    mqtt.async_publish(
-                        hass,
-                        f"hasp/{node_name}/command/jsonl",
-                        line,
-                    )
-                )
+            hass.async_create_task(_push_home_layout())
 
     # Subscribe to device LWT (online/offline)
     unsubscribe_handle = await mqtt.async_subscribe(
@@ -138,6 +136,55 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if temp_entity:
         unsub_temp = async_track_state_change_event(hass, [temp_entity], _on_temp_change)
         hass.data[DOMAIN][entry.entry_id]["unsub_temp"] = unsub_temp
+
+    # Services: allow setting options and forcing a publish when UI Configure is unavailable
+    async def _resolve_entry(call: ServiceCall) -> ConfigEntry | None:
+        eid = call.data.get("entry_id")
+        if eid:
+            return hass.config_entries.async_get_entry(eid)
+        # default to this entry if only one exists for our domain
+        entries = [e for e in hass.config_entries.async_entries(DOMAIN)]
+        if len(entries) == 1:
+            return entries[0]
+        return None
+
+    async def _svc_set_home_title(call: ServiceCall):
+        e = await _resolve_entry(call)
+        if not e:
+            return
+        title = str(call.data.get("home_title", "")).strip()
+        new_opts = {**e.options, "home_title": title or e.data.get("node_name", "Dash")}
+        hass.config_entries.async_update_entry(e, options=new_opts)
+
+    async def _svc_set_temp_entity(call: ServiceCall):
+        e = await _resolve_entry(call)
+        if not e:
+            return
+        temp = str(call.data.get("temp_entity", "")).strip()
+        new_opts = {**e.options, "temp_entity": temp}
+        hass.config_entries.async_update_entry(e, options=new_opts)
+
+    async def _svc_publish_home(call: ServiceCall):
+        await _push_home_layout()
+
+    hass.services.async_register(
+        DOMAIN,
+        "set_home_title",
+        _svc_set_home_title,
+        schema=vol.Schema({vol.Optional("entry_id"): str, vol.Required("home_title"): str}),
+    )
+    hass.services.async_register(
+        DOMAIN,
+        "set_temp_entity",
+        _svc_set_temp_entity,
+        schema=vol.Schema({vol.Optional("entry_id"): str, vol.Required("temp_entity"): str}),
+    )
+    hass.services.async_register(
+        DOMAIN,
+        "publish_home",
+        _svc_publish_home,
+        schema=vol.Schema({vol.Optional("entry_id"): str}),
+    )
 
     # Forward the setup to the platforms.
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
