@@ -23,7 +23,11 @@ This custom integration provides seamless integration for a 480x480 openHASP dis
     -   Copy the entire `custom_components/dash480` directory into the `custom_components` directory of your Home Assistant configuration folder.
     -   If you do not have a `custom_components` directory, create it.
 
-2.  **Restart Home Assistant**:
+2.  (Optional) **Install via HACS**:
+    - Add this repo as a custom repository in HACS (Integrations) and install "Dash480".
+    - Or install manually as below.
+
+3.  **Restart Home Assistant**:
     -   To make Home Assistant recognize the new integration, you must restart it.
     -   Go to **Developer Tools** > **YAML** and click **Restart**.
 
