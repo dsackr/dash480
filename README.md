@@ -87,6 +87,18 @@ For the relays to function, ensure you have configured the outputs in your openH
 
 - When the device publishes `hasp/<node>/LWT` with payload `online`, the integration pushes a basic JSONL layout to `hasp/<node>/command/jsonl`.
 - The layout is sent line-by-line (one JSON object per publish), which is compatible with openHASP’s JSONL command handling.
+
+## Configure Pages and Publish
+
+- On the Dash480 device page, edit these config entities:
+  - `number.dash480_pages` — how many pages (1–6)
+  - `text.dash480_home_title` — header center title
+  - `text.dash480_temp_entity` — sensor entity_id for header right
+  - Per page: `text.dash480_p{n}_title` and `text.dash480_p{n}_s1..s6` (entity ids for tiles)
+- Publish without Developer tools:
+  - `button.dash480_publish_all` — clears the device and publishes all pages
+  - `button.dash480_publish_home` — publishes header/footer and home relays only
+  - Find these on the Dash480 device page under Controls.
 ## Branding (Icons)
 
 This repo includes SVG sources you can export to PNG for Home Assistant Brands:

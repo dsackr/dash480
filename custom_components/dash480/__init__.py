@@ -9,7 +9,7 @@ import voluptuous as vol
 from .const import DOMAIN
 
 # List of platforms to support.
-PLATFORMS = ["switch", "text", "number"]
+PLATFORMS = ["switch", "text", "number", "button"]
 
 def _home_layout_lines(node_name: str, title: str, temp_text: str) -> list[str]:
     """Build JSONL lines for header/footer and home page with 3 relays."""
