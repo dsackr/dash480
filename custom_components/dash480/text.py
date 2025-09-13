@@ -1,5 +1,4 @@
 """Text platform for Dash480."""
-from homeassistant.components import mqtt
 from homeassistant.components.text import TextEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -37,10 +36,8 @@ class Dash480NodeNameText(TextEntity):
     @property
     def device_info(self) -> DeviceInfo:
         """Return device information."""
-        # Match MQTT-created device identifiers so this entity attaches to the
-        # same Dash480 device as the MQTT-based switches.
         return DeviceInfo(
-            identifiers={("mqtt", self._device_identifier)},
+            identifiers={(DOMAIN, self._device_identifier)},
             name=f"Dash480 ({self.native_value})",
             manufacturer="openHASP",
             model="ESP32-S3 480x480",
