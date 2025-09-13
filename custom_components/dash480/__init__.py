@@ -9,7 +9,7 @@ import voluptuous as vol
 from .const import DOMAIN
 
 # List of platforms to support.
-PLATFORMS = ["switch", "text"]
+PLATFORMS = ["switch", "text", "number"]
 
 def _home_layout_lines(node_name: str, title: str, temp_text: str) -> list[str]:
     """Build JSONL lines for header/footer and home page with 3 relays."""
@@ -52,6 +52,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     node_name = entry.data["node_name"]
     home_title = entry.options.get("home_title", node_name)
     temp_entity = entry.options.get("temp_entity", "")
+    pages_count = int(entry.options.get("pages", 1))
+    # control map (id -> entity_id)
+    hass.data[DOMAIN][entry.entry_id]["ctrl_map"] = {}
 
     # helper to publish current temp to header right label (p0b3)
     async def _publish_temp(value: str) -> None:
@@ -73,6 +76,51 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         lines = _home_layout_lines(node_name, home_title, temp_text)
         for line in lines:
             await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", line)
+
+    async def _publish_all() -> None:
+        """Publish full layout based on config entities (pages, titles, slots)."""
+        await mqtt.async_publish(hass, f"hasp/{node_name}/command/clearpage", "all")
+        # Header/footer
+        st = hass.states.get(temp_entity) if temp_entity else None
+        tval = "--"
+        if st and st.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, ""):
+            tval = str(st.state)
+        lines = _home_layout_lines(node_name, home_title, tval)
+        for line in lines:
+            await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", line)
+        # Pages based on options
+        ctrl_map: dict[str, str] = {}
+        pages = int(entry.options.get("pages", 1))
+        # prev/next ring
+        def pprev(p):
+            return pages if p == 1 else p - 1
+        def pnext(p):
+            return 1 if p == pages else p + 1
+        for p in range(1, pages + 1):
+            await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"id":0,"obj":"page","prev":{pprev(p)},"next":{pnext(p)}}}')
+            # background
+            await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":800,"x":0,"y":56,"w":480,"h":424,"bg_color":"#0B1220"}}')
+            # slots 1..6
+            for idx in range(1, 7):
+                key = f"p{p}_s{idx}"
+                ent = str(entry.options.get(key, ""))
+                if not ent or ent in ("unknown", "unavailable"):
+                    continue
+                # grid position (2 rows x 3 cols)
+                i0 = idx - 1
+                col = i0 % 3
+                row = i0 // 3
+                x = 40 + col * 160
+                y = 120 + row * 140
+                base = p * 1000 + i0 * 10
+                label = hass.states.get(ent).attributes.get("friendly_name", ent) if hass.states.get(ent) else ent
+                # tile background + label
+                await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":{base+1},"x":{x},"y":{y},"w":128,"h":120,"radius":14,"bg_color":"#1E293B"}}')
+                await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"label","id":{base},"x":{x+8},"y":{y+8},"w":112,"h":22,"text":"{label}","text_font":18,"text_color":"#9CA3AF","bg_opa":0}}')
+                # toggle button
+                await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btn","id":{base+2},"x":{x+20},"y":{y+40},"w":88,"h":64,"text":"\\uE425","text_font":64,"toggle":true,"radius":12,"bg_color":"#1E293B","text_color":"#FFFFFF","border_width":0}}')
+                ctrl_map[f"p{p}b{base+2}"] = ent
+        hass.data[DOMAIN][entry.entry_id]["ctrl_map"] = ctrl_map
 
     # Define the callback for when the device comes online
     @callback
@@ -114,11 +162,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             elif topic_tail == "p1b32":
                 payload = '{"state":"on"}' if val == 1 else '{"state":"off"}'
                 hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/output40", payload))
+            else:
+                # Generic tile routing based on ctrl_map
+                ent = hass.data[DOMAIN][entry.entry_id].get("ctrl_map", {}).get(topic_tail)
+                if ent:
+                    domain = ent.split(".")[0]
+                    if domain == "switch":
+                        svc = "turn_on" if val == 1 else "turn_off"
+                        hass.async_create_task(hass.services.async_call("switch", svc, {"entity_id": ent}))
+                    elif domain == "light":
+                        svc = "turn_on" if val == 1 else "turn_off"
+                        hass.async_create_task(hass.services.async_call("light", svc, {"entity_id": ent}))
+                    elif domain == "fan":
+                        if val == 1:
+                            hass.async_create_task(hass.services.async_call("fan", "turn_on", {"entity_id": ent}))
+                        else:
+                            hass.async_create_task(hass.services.async_call("fan", "turn_off", {"entity_id": ent}))
         # Title on page change (only page 1 for now)
         if topic_tail == "page":
             page = str(msg.payload)
-            if page == "1":
-                hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p0b2.text", home_title))
+            if page.isdigit():
+                p = int(page)
+                title = entry.options.get(f"p{p}_title", home_title if p == 1 else f"Page {p}")
+                hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p0b2.text", title))
 
     unsub_events = await mqtt.async_subscribe(hass, f"hasp/{node_name}/state/#", _state_event)
     hass.data[DOMAIN][entry.entry_id]["unsub_events"] = unsub_events
@@ -233,6 +299,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         DOMAIN,
         "publish_home",
         _svc_publish_home,
+        schema=vol.Schema({vol.Optional("entry_id"): str}),
+    )
+    hass.services.async_register(
+        DOMAIN,
+        "publish_all",
+        lambda call: hass.async_create_task(_publish_all()),
         schema=vol.Schema({vol.Optional("entry_id"): str}),
     )
 
