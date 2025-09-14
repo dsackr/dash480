@@ -102,6 +102,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         page_numbers = [int(e.data.get("page_order", 99)) for e in page_entries]
         # include home page 1 at start for wrap math
         pages_ring = [1] + page_numbers
+        # Update page 1 prev/next to wrap to first/last page if pages exist
+        if page_numbers:
+            prev_home = page_numbers[-1]
+            next_home = page_numbers[0]
+            await mqtt.async_publish(
+                hass,
+                f"hasp/{node_name}/command/jsonl",
+                f'{{"page":1,"id":0,"obj":"page","prev":{prev_home},"next":{next_home}}}',
+            )
         def pprev(p):
             idx = pages_ring.index(p)
             return pages_ring[(idx - 1) % len(pages_ring)]
