@@ -10,6 +10,7 @@ from .const import DOMAIN
 
 # List of platforms to support.
 PLATFORMS = ["switch", "text", "number", "button"]
+PLATFORMS_PAGE = ["text", "button"]
 
 def _home_layout_lines(node_name: str, title: str, temp_text: str) -> list[str]:
     """Build JSONL lines for header/footer and home page with 3 relays."""
@@ -49,6 +50,12 @@ async def async_get_options_flow(entry: ConfigEntry):
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Dash480 from a config entry."""
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {}
+    role = entry.data.get("role", "panel")
+    # If this is a Page entry, set up page entities only and return early.
+    if role == "page":
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS_PAGE)
+        return True
+    # Panel entry setup
     node_name = entry.data["node_name"]
     home_title = entry.options.get("home_title", node_name)
     temp_entity = entry.options.get("temp_entity", "")
