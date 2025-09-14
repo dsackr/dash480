@@ -38,7 +38,10 @@ async def async_setup(hass: HomeAssistant, config):
             _LOGGER.warning("Dash480: no publisher for entry_id=%s", eid)
             return
         _LOGGER.info("Dash480: publish_all(entry_id=%s)", eid)
-        await pub["publish_all"]()
+        try:
+            await pub["publish_all"]()
+        except Exception as exc:
+            _LOGGER.exception("Dash480: publish_all failed for %s: %s", eid, exc)
 
     async def svc_publish_home(call):
         eid = await _pick_entry_id(call)
@@ -49,7 +52,10 @@ async def async_setup(hass: HomeAssistant, config):
             _LOGGER.warning("Dash480: no home publisher for entry_id=%s", eid)
             return
         _LOGGER.info("Dash480: publish_home(entry_id=%s)", eid)
-        await pub["publish_home"]()
+        try:
+            await pub["publish_home"]()
+        except Exception as exc:
+            _LOGGER.exception("Dash480: publish_home failed for %s: %s", eid, exc)
 
     async def svc_set_home_title(call):
         eid = await _pick_entry_id(call)
@@ -161,6 +167,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     async def _publish_all() -> None:
         """Publish full layout based on config entities (pages, titles, slots)."""
+        _LOGGER.info("Dash480: publishing all for node=%s", node_name)
         await mqtt.async_publish(hass, f"hasp/{node_name}/command/clearpage", "all")
         # Header/footer
         st = hass.states.get(temp_entity) if temp_entity else None

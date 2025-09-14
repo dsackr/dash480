@@ -67,7 +67,7 @@ class Dash480PublishAllButton(_BaseDashButton):
             DOMAIN,
             "publish_all",
             {"entry_id": self._entry.entry_id},
-            blocking=False,
+            blocking=True,
         )
 
 
@@ -85,7 +85,7 @@ class Dash480PublishHomeButton(_BaseDashButton):
             DOMAIN,
             "publish_home",
             {"entry_id": self._entry.entry_id},
-            blocking=False,
+            blocking=True,
         )
 
 
@@ -106,5 +106,5 @@ class Dash480PublishPageButton(_BaseDashButton):
                 DOMAIN,
                 "publish_all",
                 {"entry_id": panel_id},
-                blocking=False,
+                blocking=True,
             )
