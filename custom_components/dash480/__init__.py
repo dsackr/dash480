@@ -100,7 +100,7 @@ def _home_layout_lines(node_name: str, title: str, temp_text: str) -> list[str]:
     lines.append('{"page":0,"id":0,"obj":"page"}')
     lines.append('{"page":1,"id":0,"obj":"page","prev":1,"next":1}')
     # Header (page 0)
-    lines.append('{"page":0,"id":10,"obj":"obj","x":0,"y":0,"w":480,"h":56,"bg_color":"#1F2937"}')
+    lines.append('{"page":0,"id":10,"obj":"obj","x":0,"y":0,"w":480,"h":56,"bg_color":"#1F2937","bg_opa":255}')
     lines.append('{"page":0,"id":1,"obj":"label","x":12,"y":8,"w":120,"h":40,"text":"00:00","template":"%H:%M","text_font":24,"align":"left","text_color":"#E5E7EB","bg_opa":0}')
     # Center title (p0b2)
     t = title.replace('"', '\\"')
@@ -113,7 +113,7 @@ def _home_layout_lines(node_name: str, title: str, temp_text: str) -> list[str]:
     lines.append('{"page":0,"id":91,"obj":"btn","action":{"down": "page 1"},"x":160,"y":430,"w":160,"h":50,"bg_color":"#2C3E50","text":"\\uE2DC","text_color":"#FFFFFF","radius":0,"border_side":0,"text_font":48}')
     lines.append('{"page":0,"id":92,"obj":"btn","action":{"down": "page next"},"x":320,"y":430,"w":160,"h":50,"bg_color":"#2C3E50","text":"\\uE142","text_color":"#FFFFFF","radius":0,"border_side":0,"text_font":48}')
     # Home page background area
-    lines.append('{"page":1,"obj":"obj","id":800,"x":0,"y":56,"w":480,"h":424,"bg_color":"#0B1220"}')
+    lines.append('{"page":1,"obj":"obj","id":800,"x":0,"y":56,"w":480,"h":424,"bg_color":"#0B1220","bg_opa":255}')
     # Three relay buttons (IDs 12/22/32) using working layout
     lines.append('{"page":1,"obj":"btn","id":12,"x":25,"y":300,"w":120,"h":60,"text":"Relay 1","text_font":26,"toggle":true,"groupid":1,"radius":8,"bg_color":"#374151","text_color":"#FFFFFF","border_width":0}')
     lines.append('{"page":1,"obj":"btn","id":22,"x":175,"y":300,"w":120,"h":60,"text":"Relay 2","text_font":26,"toggle":true,"groupid":2,"radius":8,"bg_color":"#374151","text_color":"#FFFFFF","border_width":0}')
@@ -206,7 +206,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             p = int(pe.data.get("page_order", 99))
             title = pe.options.get("title", f"Page {p}")
             await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"id":0,"obj":"page","prev":{pprev(p)},"next":{pnext(p)}}}')
-            await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":800,"x":0,"y":56,"w":480,"h":424,"bg_color":"#0B1220"}}')
+            await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":800,"x":0,"y":56,"w":480,"h":424,"bg_color":"#0B1220","bg_opa":255}}')
             # page title update will occur on page change via router
             # slots
             slot_keys = [k for k in pe.options.keys() if k.startswith("s")] or []
@@ -224,7 +224,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 base = p * 1000 + i0 * 10
                 st_ent = hass.states.get(ent)
                 label = st_ent.attributes.get("friendly_name", ent) if st_ent else ent
-                await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":{base+1},"x":{x},"y":{y},"w":128,"h":120,"radius":14,"bg_color":"#1E293B"}}')
+                await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":{base+1},"x":{x},"y":{y},"w":128,"h":120,"radius":14,"bg_color":"#1E293B","bg_opa":255}}')
                 await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"label","id":{base},"x":{x+8},"y":{y+8},"w":112,"h":22,"text":"{label}","text_font":18,"text_color":"#9CA3AF","bg_opa":0}}')
                 domain = ent.split(".")[0]
                 if domain in ("switch", "light", "fan"):
