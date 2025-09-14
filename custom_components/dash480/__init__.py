@@ -1,4 +1,7 @@
 """The Dash480 integration."""
+from __future__ import annotations
+
+import logging
 from homeassistant.components import mqtt
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback, ServiceCall
@@ -7,6 +10,78 @@ from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 import voluptuous as vol
 
 from .const import DOMAIN
+
+_LOGGER = logging.getLogger(__name__)
+
+# Top-level (component) setup: register services once and route by entry_id
+async def async_setup(hass: HomeAssistant, config):
+    store = hass.data.setdefault(DOMAIN, {})
+    if store.get("services_registered"):
+        return True
+
+    async def _pick_entry_id(call) -> str | None:
+        eid = call.data.get("entry_id")
+        if eid:
+            return eid
+        publishers = hass.data.get(DOMAIN, {}).get("publishers", {})
+        if len(publishers) == 1:
+            return next(iter(publishers.keys()))
+        _LOGGER.warning("Dash480: entry_id required when multiple panels exist")
+        return None
+
+    async def svc_publish_all(call):
+        eid = await _pick_entry_id(call)
+        if not eid:
+            return
+        pub = hass.data.get(DOMAIN, {}).get("publishers", {}).get(eid)
+        if not pub or not pub.get("publish_all"):
+            _LOGGER.warning("Dash480: no publisher for entry_id=%s", eid)
+            return
+        _LOGGER.info("Dash480: publish_all(entry_id=%s)", eid)
+        await pub["publish_all"]()
+
+    async def svc_publish_home(call):
+        eid = await _pick_entry_id(call)
+        if not eid:
+            return
+        pub = hass.data.get(DOMAIN, {}).get("publishers", {}).get(eid)
+        if not pub or not pub.get("publish_home"):
+            _LOGGER.warning("Dash480: no home publisher for entry_id=%s", eid)
+            return
+        _LOGGER.info("Dash480: publish_home(entry_id=%s)", eid)
+        await pub["publish_home"]()
+
+    async def svc_set_home_title(call):
+        eid = await _pick_entry_id(call)
+        if not eid:
+            return
+        title = str(call.data.get("home_title", "")).strip()
+        entry = hass.config_entries.async_get_entry(eid)
+        if not entry:
+            _LOGGER.warning("Dash480: entry not found for set_home_title: %s", eid)
+            return
+        new_opts = {**entry.options, "home_title": title or entry.data.get("node_name", "Dash")}
+        hass.config_entries.async_update_entry(entry, options=new_opts)
+
+    async def svc_set_temp_entity(call):
+        eid = await _pick_entry_id(call)
+        if not eid:
+            return
+        ent = str(call.data.get("temp_entity", "")).strip()
+        entry = hass.config_entries.async_get_entry(eid)
+        if not entry:
+            _LOGGER.warning("Dash480: entry not found for set_temp_entity: %s", eid)
+            return
+        new_opts = {**entry.options, "temp_entity": ent}
+        hass.config_entries.async_update_entry(entry, options=new_opts)
+
+    hass.services.async_register(DOMAIN, "publish_all", svc_publish_all)
+    hass.services.async_register(DOMAIN, "publish_home", svc_publish_home)
+    hass.services.async_register(DOMAIN, "set_home_title", svc_set_home_title)
+    hass.services.async_register(DOMAIN, "set_temp_entity", svc_set_temp_entity)
+
+    store["services_registered"] = True
+    return True
 
 # List of platforms to support.
 PLATFORMS = ["switch", "text", "number", "button"]
@@ -369,6 +444,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         schema=vol.Schema({vol.Optional("entry_id"): str}),
     )
 
+    # Register publishers for component-level services
+    hass.data[DOMAIN].setdefault("publishers", {})[entry.entry_id] = {
+        "publish_all": _publish_all,
+        "publish_home": _push_home_layout,
+    }
     # Forward the setup to the platforms.
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -390,6 +470,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unsub_update = hass.data[DOMAIN][entry.entry_id].get("unsub_update")
     if unsub_update:
         unsub_update()
+    # Remove publishers
+    pubs = hass.data.get(DOMAIN, {}).get("publishers", {})
+    if entry.entry_id in pubs:
+        pubs.pop(entry.entry_id, None)
 
     # Forward the unload to the platforms.
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
