@@ -426,30 +426,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     async def _svc_publish_home(call: ServiceCall):
         await _push_home_layout()
 
-    hass.services.async_register(
-        DOMAIN,
-        "set_home_title",
-        _svc_set_home_title,
-        schema=vol.Schema({vol.Optional("entry_id"): str, vol.Required("home_title"): str}),
-    )
-    hass.services.async_register(
-        DOMAIN,
-        "set_temp_entity",
-        _svc_set_temp_entity,
-        schema=vol.Schema({vol.Optional("entry_id"): str, vol.Required("temp_entity"): str}),
-    )
-    hass.services.async_register(
-        DOMAIN,
-        "publish_home",
-        _svc_publish_home,
-        schema=vol.Schema({vol.Optional("entry_id"): str}),
-    )
-    hass.services.async_register(
-        DOMAIN,
-        "publish_all",
-        lambda call: hass.async_create_task(_publish_all()),
-        schema=vol.Schema({vol.Optional("entry_id"): str}),
-    )
+    # Note: Services are registered at component level in async_setup().
 
     # Register publishers for component-level services
     hass.data[DOMAIN].setdefault("publishers", {})[entry.entry_id] = {
