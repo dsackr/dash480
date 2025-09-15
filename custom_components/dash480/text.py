@@ -3,6 +3,7 @@ from homeassistant.components.text import TextEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
@@ -186,6 +187,8 @@ class Dash480SlotEntityText(_BaseDashText):
         self._attr_unique_id = f"{self._device_identifier}_s{slot}"
         # For page entries, options keys are s1..sN
         self._attr_native_value = config_entry.options.get(f"s{slot}", "")
+        # Hide empty slots by default in the registry; will be enabled when populated
+        self._attr_entity_registry_enabled_default = bool(self._attr_native_value)
         self._unsub_update = None
 
     async def async_set_value(self, value: str) -> None:
@@ -200,6 +203,22 @@ class Dash480SlotEntityText(_BaseDashText):
             # Update from options changes made by Add Entity button or options flow
             self._attr_native_value = updated.options.get(f"s{self.slot}", "")
             self.async_write_ha_state()
+            # Enable/disable entity in registry based on emptiness
+            try:
+                reg = er.async_get(self.hass)
+                ent = reg.async_get(self.entity_id)
+                if ent:
+                    if self._attr_native_value:
+                        # enable if we disabled it
+                        if ent.disabled_by == er.RegistryEntryDisabler.INTEGRATION:
+                            reg.async_update_entity(self.entity_id, disabled_by=None)
+                    else:
+                        # disable if integration-managed
+                        if ent.disabled_by in (None, er.RegistryEntryDisabler.INTEGRATION):
+                            reg.async_update_entity(self.entity_id, disabled_by=er.RegistryEntryDisabler.INTEGRATION)
+            except Exception:
+                # Avoid breaking if registry API changes
+                pass
         self._unsub_update = self.config_entry.add_update_listener(_on_update)
 
     async def async_will_remove_from_hass(self) -> None:
