@@ -43,6 +43,7 @@ class Dash480AddEntitySelect(SelectEntity):
         self._attr_icon = "mdi:playlist-plus"
         self._attr_unique_id = f"{self._device_identifier}_picker"
         self._current: str | None = entry.options.get("pending_entity") or None
+        self._unsub_update = None
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -79,3 +80,18 @@ class Dash480AddEntitySelect(SelectEntity):
         new_opts = {**self._entry.options, "pending_entity": option}
         self.hass.config_entries.async_update_entry(self._entry, options=new_opts)
         self.async_write_ha_state()
+
+    async def async_added_to_hass(self) -> None:
+        async def _on_update(hass: HomeAssistant, updated: ConfigEntry):
+            # Reflect when Add button clears pending_entity and when slots change (updates options list)
+            self._current = updated.options.get("pending_entity") or None
+            self.async_write_ha_state()
+        self._unsub_update = self._entry.add_update_listener(_on_update)
+
+    async def async_will_remove_from_hass(self) -> None:
+        if self._unsub_update:
+            try:
+                self._unsub_update()
+            except Exception:
+                pass
+            self._unsub_update = None
