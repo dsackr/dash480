@@ -1,20 +1,24 @@
 # Dash480 Custom Integration for Home Assistant
 
-This custom integration provides seamless integration for a 480x480 openHASP display panel (referred to as Dash480) into Home Assistant. It creates a single device with entities to control the onboard relays and configure the device name directly from the Home Assistant UI.
+This custom integration provides seamless integration for an openHASP 480×480 panel ("Dash480") with Home Assistant. It provisions the screen layout over MQTT and exposes convenient config entities in HA to manage pages, tiles, and header content.
 
 ## Features
 
-- **Simple UI Setup**: A configuration wizard (config flow) on the Integrations page to get you started.
-- **Device Control**: Creates a single "Dash480" device in Home Assistant, which contains all related entities.
-- **Relay Switches**: Provides three `switch` entities to control the three onboard relays.
-- **Node Name Control**: Adds a "Node Name" control to the device page. Changing this updates the integration (HA will listen/publish on the new node), but it does not change the physical device’s hostname.
-- **Automatic Screen Layout**: Automatically pushes a default screen layout with controls for the three relays to your device when it connects to MQTT.
+- **Simple Setup**: Add a Panel, then add Pages from the Integrations UI.
+- **Header Controls**: Set Home Title and a Temp sensor for the header from HA.
+- **Relay Switches**: Three switches for onboard relays (optional, if wired).
+- **Popup Controls for Tiles**:
+  - Fans: tapping the fan tile opens a popup with Off/Low/Med/High.
+  - Color-capable lights: tapping the light tile opens a color popup (Off, Red, Green, Blue, Warm, Cool). The tile icon tint updates to the chosen color.
+  - Switches and non-color lights: simple on/off toggle.
+- **Add Entity Flow**: Create pages with a title only; then add entities later using a Page-level entity picker and an Add button.
+- **Automatic Layout Push**: When the device comes online (MQTT LWT), the current layout is pushed.
 
 ## Prerequisites
 
 1.  **Home Assistant**: A running instance of Home Assistant.
 2.  **MQTT Broker**: An MQTT broker that is connected to your Home Assistant instance.
-3.  **openHASP Device**: An ESP32-S3 480x480 panel flashed with the openHASP firmware. Ensure it is connected to your network.
+3.  **openHASP Device**: An ESP32-S3 480×480 panel flashed with openHASP, connected to your network and MQTT.
 
 ## Installation
 
@@ -43,37 +47,44 @@ This custom integration provides seamless integration for a 480x480 openHASP dis
     -   You will be asked for the **Node Name**. This is the MQTT hostname of your openHASP device (e.g., `plate`).
     -   Click **Submit**.
 
-3.  **Configure Title and Temp (Options)**:
-    - Go to **Settings** > **Devices & Services** > find **Dash480** > click **Configure**.
+3.  **Configure Header (Options)**:
+    - Go to **Settings** > **Devices & Services** > Dash480 panel > **Configure**.
     - Set:
-      - **Home Title**: shown in the header center (defaults to the node name).
-      - **Temp Entity**: an HA sensor (e.g., `sensor.living_temp`) shown on the right side of the header.
-    - Save. The layout is pushed on device online; power‑cycle the panel or briefly disconnect/reconnect Wi‑Fi to trigger LWT `online`.
+      - Home Title: center title in the header (defaults to node name).
+      - Temp Entity: sensor to show at top-right (optional).
+    - Save. The header will update; the full layout is pushed when the device comes online (MQTT LWT `online`).
 
 4.  **Device Creation**:
     -   The integration will be added, and you will see a new "Dash480" device with its associated entities (relays and node name).
 
 ## Usage
 
-### Controlling the Relays
+### Add Pages
 
-Once installed, you will find three new switch entities:
+1. After adding the Panel, add one or more Pages from Integrations → Dash480 → Add → Page.
+2. Page creation asks for: Panel, Page Order, and optional Title. No entities at creation time.
 
--   `switch.relay_1`
--   `switch.relay_2`
--   `switch.relay_3`
+### Add Entities to a Page
 
-You can add these to your dashboards or use them in automations just like any other switch.
+On the Page device in HA, use:
+
+- P{n} Title (text): sets the page title.
+- P{n} Add Entity (select): choose any switch, light, fan, or sensor in HA that isn’t already on the page.
+- Add Entity (button): assigns the selected entity to the first empty slot and refreshes the screen.
+- Publish Page (button): republish the current layout for all pages on this panel (useful if you’ve changed multiple slots).
+
+You can still edit specific slots via the Page’s Configure dialog if needed, but the above flow is simpler for most cases.
+
+### On-Device Controls
+
+- Switches and non-color lights: tap to toggle on/off.
+- Fans: tap the fan tile to open a popup with Off/Low/Med/High. The selection sets fan percentage (0/33/66/100).
+- Color-capable lights: tap the tile to open color options (Off, Red, Green, Blue, Warm, Cool). Choosing a color turns the light on and tints the tile icon to match.
+- Brightness/preset rows under tiles have been removed in favor of popups.
 
 ### Changing the Node Name
 
-If you need to change the node name Home Assistant uses for this device:
-
-1.  Go to the **Dash480** device page (**Settings** > **Devices & Services** > **Dash480**).
-2.  Under the **Controls** section, you will find a text box for **Node Name**.
-3.  Enter the new node name and press Enter.
-
-This updates the integration to listen/publish on the new `hasp/<node>/...` topics. It does not attempt to change the physical device’s hostname.
+On the Dash480 panel device page, set Node Name if needed. This changes the MQTT topic prefix used by the integration; it does not change the device’s own hostname.
 
 ### Physical Device Setup
 
@@ -83,22 +94,20 @@ For the relays to function, ensure you have configured the outputs in your openH
 -   **Group 2** controls Relay 2
 -   **Group 3** controls Relay 3
 
-## How the welcome layout is pushed
+## How the layout is pushed
 
 - When the device publishes `hasp/<node>/LWT` with payload `online`, the integration pushes a basic JSONL layout to `hasp/<node>/command/jsonl`.
 - The layout is sent line-by-line (one JSON object per publish), which is compatible with openHASP’s JSONL command handling.
 
-## Configure Pages and Publish
+## Publish controls
 
-- On the Dash480 device page, edit these config entities:
-  - `number.dash480_pages` — how many pages (1–6)
-  - `text.dash480_home_title` — header center title
-  - `text.dash480_temp_entity` — sensor entity_id for header right
-  - Per page: `text.dash480_p{n}_title` and `text.dash480_p{n}_s1..s6` (entity ids for tiles)
-- Publish without Developer tools:
-  - `button.dash480_publish_all` — clears the device and publishes all pages
-  - `button.dash480_publish_home` — publishes header/footer and home relays only
-  - Find these on the Dash480 device page under Controls.
+- On the Panel device:
+  - Publish All: clears the device and publishes the header/footer and all pages.
+  - Publish Home: publishes only the header/footer and home relays.
+- On each Page device:
+  - Publish Page: republish all pages for the associated panel (handy after changing slots).
+
+Tip: The Add Entity button already triggers a republish; you can use Publish Page to force a manual refresh any time.
 ## Branding (Icons)
 
 This repo includes SVG sources you can export to PNG for Home Assistant Brands:
