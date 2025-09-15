@@ -142,11 +142,13 @@ class Dash480PageTitleText(_BaseDashText):
         self.page = page
         self._attr_name = f"P{page} Title"
         self._attr_unique_id = f"{self._device_identifier}_title"
-        self._attr_native_value = config_entry.options.get(f"p{page}_title", f"Page {page}")
+        # Page title is stored under key "title" on the page entry
+        self._attr_native_value = config_entry.options.get("title", f"Page {page}")
+        self._unsub_update = None
 
     async def async_set_value(self, value: str) -> None:
-        key = f"p{self.page}_title"
-        opts = {**self.config_entry.options, key: value}
+        # Persist under the standard "title" key on the page entry
+        opts = {**self.config_entry.options, "title": value}
         self.hass.config_entries.async_update_entry(self.config_entry, options=opts)
         self._attr_native_value = value
         self.async_write_ha_state()
@@ -157,11 +159,20 @@ class Dash480PageTitleText(_BaseDashText):
                 DOMAIN, "publish_all", {"entry_id": panel_entry_id}, blocking=False
             )
 
-        panel_entry_id = self.config_entry.data.get("panel_entry_id")
-        if panel_entry_id:
-            await self.hass.services.async_call(
-                DOMAIN, "publish_all", {"entry_id": panel_entry_id}, blocking=False
-            )
+    async def async_added_to_hass(self) -> None:
+        async def _on_update(hass: HomeAssistant, updated: ConfigEntry):
+            # keep in sync with options changes from other entities/buttons
+            self._attr_native_value = updated.options.get("title", f"Page {self.page}")
+            self.async_write_ha_state()
+        self._unsub_update = self.config_entry.add_update_listener(_on_update)
+
+    async def async_will_remove_from_hass(self) -> None:
+        if self._unsub_update:
+            try:
+                self._unsub_update()
+            except Exception:
+                pass
+            self._unsub_update = None
 
 
 class Dash480SlotEntityText(_BaseDashText):
@@ -175,6 +186,7 @@ class Dash480SlotEntityText(_BaseDashText):
         self._attr_unique_id = f"{self._device_identifier}_s{slot}"
         # For page entries, options keys are s1..sN
         self._attr_native_value = config_entry.options.get(f"s{slot}", "")
+        self._unsub_update = None
 
     async def async_set_value(self, value: str) -> None:
         key = f"s{self.slot}"
@@ -182,3 +194,18 @@ class Dash480SlotEntityText(_BaseDashText):
         self.hass.config_entries.async_update_entry(self.config_entry, options=opts)
         self._attr_native_value = value
         self.async_write_ha_state()
+
+    async def async_added_to_hass(self) -> None:
+        async def _on_update(hass: HomeAssistant, updated: ConfigEntry):
+            # Update from options changes made by Add Entity button or options flow
+            self._attr_native_value = updated.options.get(f"s{self.slot}", "")
+            self.async_write_ha_state()
+        self._unsub_update = self.config_entry.add_update_listener(_on_update)
+
+    async def async_will_remove_from_hass(self) -> None:
+        if self._unsub_update:
+            try:
+                self._unsub_update()
+            except Exception:
+                pass
+            self._unsub_update = None
