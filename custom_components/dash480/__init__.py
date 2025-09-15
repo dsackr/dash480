@@ -166,8 +166,8 @@ async def async_setup(hass: HomeAssistant, config):
     return True
 
 # List of platforms to support.
-PLATFORMS = ["switch", "text", "number", "button"]
-PLATFORMS_PAGE = ["text", "button"]
+PLATFORMS = ["switch", "text", "number", "button", "select"]
+PLATFORMS_PAGE = ["text", "button", "select"]
 
 def _home_layout_lines(node_name: str, title: str, temp_text: str) -> list[str]:
     """Build JSONL lines for header/footer and home page with 3 relays."""
@@ -284,6 +284,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         matrix_map: dict[str, dict] = {}
         ent_toggle_map: dict[str, list[tuple[int,int]]] = {}
         ent_matrix_map: dict[str, list[tuple[int,int,dict]]] = {}
+        popup_map: dict[str, dict] = {}
+        popup_overlay_ids: dict[int, list[int]] = {}
         for pe in page_entries:
             p = int(pe.data.get("page_order", 99))
             title = pe.options.get("title", f"Page {p}")
@@ -312,56 +314,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"label","id":{base3},"x":{x+8},"y":{y+8},"w":112,"h":22,"text":"{label}","text_font":18,"text_color":"#9CA3AF","bg_opa":0}}')
                 domain = ent.split(".")[0]
                 if domain in ("switch", "light", "fan"):
-                    # Common main toggle
+                    # Main control area. Switches toggle directly; fans and color lights open a selector popup.
+                    is_light = domain == "light"
+                    is_fan = domain == "fan"
+                    modes = st_ent.attributes.get("supported_color_modes", []) if st_ent else []
+                    has_color = False
+                    try:
+                        m = ",".join(modes).lower()
+                        has_color = ("hs" in m) or ("rgb" in m) or ("rgbw" in m) or ("rgbww" in m)
+                    except Exception:
+                        has_color = False
+                    # Icon: power for non-fan, fan glyph for fans
+                    icon = "\\uE425" if not is_fan else "\\uE4DC"
+                    route_to_popup = (is_fan or (is_light and has_color))
                     await mqtt.async_publish(
                         hass,
                         f"hasp/{node_name}/command/jsonl",
-                        f'{{"page":{p},"obj":"btn","id":{base3+2},"x":{x+20},"y":{y+40},"w":88,"h":64,"text":"\\uE425","text_font":64,"toggle":true,"radius":12,"bg_color":"#1E293B","bg_opa":255,"text_color":"#FFFFFF","border_width":0}}',
+                        f'{{"page":{p},"obj":"btn","id":{base3+2},"x":{x+20},"y":{y+40},"w":88,"h":64,"text":"{icon}","text_font":64,"toggle":1,"radius":12,"bg_color":"#1E293B","bg_opa":255,"text_color":"#FFFFFF","border_width":0}}',
                     )
-                    ctrl_map[f"p{p}b{base3+2}"] = ent
                     ent_toggle_map.setdefault(ent, []).append((p, base3+2))
-                    if domain == "light":
-                        # Brightness presets if supported
-                        modes = st_ent.attributes.get("supported_color_modes", []) if st_ent else []
-                        has_bri = False
-                        try:
-                            m = ",".join(modes).lower()
-                            has_bri = ("brightness" in m) or ("xy" in m) or ("hs" in m) or ("rgb" in m)
-                        except Exception:
-                            has_bri = False
-                        if has_bri:
-                            mid = base3 + 3
-                            await mqtt.async_publish(
-                                hass,
-                                f"hasp/{node_name}/command/jsonl",
-                                f'{{"page":{p},"obj":"btnmatrix","id":{mid},"x":{x},"y":{y+110},"w":128,"h":36,"text_font":16,"options":["25%","50%","75%","100%"],"toggle":1,"one_check":1,"val":0,"radius":8}}',
-                            )
-                            mi = {"type": "light_dim", "entity": ent}
-                            matrix_map[f"p{p}m{mid}"] = mi
-                            ent_matrix_map.setdefault(ent, []).append((p, mid, mi))
-                    elif domain == "fan":
-                        # Fan presets or percentage
-                        presets = st_ent.attributes.get("preset_modes", []) if st_ent else []
-                        mid = base3 + 3
-                        if presets:
-                            opts = ",".join([f'"{o}"' for o in presets])
-                            await mqtt.async_publish(
-                                hass,
-                                f"hasp/{node_name}/command/jsonl",
-                                f'{{"page":{p},"obj":"btnmatrix","id":{mid},"x":{x},"y":{y+110},"w":128,"h":36,"text_font":16,"options":[{opts}],"toggle":1,"one_check":1,"val":0,"radius":8}}',
-                            )
-                            mi = {"type": "fan_preset", "entity": ent, "presets": presets}
-                            matrix_map[f"p{p}m{mid}"] = mi
-                            ent_matrix_map.setdefault(ent, []).append((p, mid, mi))
-                        else:
-                            await mqtt.async_publish(
-                                hass,
-                                f"hasp/{node_name}/command/jsonl",
-                                f'{{"page":{p},"obj":"btnmatrix","id":{mid},"x":{x},"y":{y+110},"w":128,"h":36,"text_font":16,"options":["Off","Low","Med","High"],"toggle":1,"one_check":1,"val":0,"radius":8}}',
-                            )
-                            mi = {"type": "fan_pct", "entity": ent}
-                            matrix_map[f"p{p}m{mid}"] = mi
-                            ent_matrix_map.setdefault(ent, []).append((p, mid, mi))
+                    if route_to_popup:
+                        popup_map[f"p{p}b{base3+2}"] = {"type": ("fan_select" if is_fan else "light_color"), "entity": ent, "page": p, "btn_id": base3+2}
+                    else:
+                        ctrl_map[f"p{p}b{base3+2}"] = ent
                 elif domain == "sensor":
                     # invisible button to hold value text (more reliable updates than label)
                     val = st_ent.state if st_ent and st_ent.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, "") else "--"
@@ -372,6 +347,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN][entry.entry_id]["matrix_map"] = matrix_map
         hass.data[DOMAIN][entry.entry_id]["ent_toggle_map"] = ent_toggle_map
         hass.data[DOMAIN][entry.entry_id]["ent_matrix_map"] = ent_matrix_map
+        hass.data[DOMAIN][entry.entry_id]["popup_map"] = popup_map
+        hass.data[DOMAIN][entry.entry_id]["popup_overlay_ids"] = popup_overlay_ids
         # rewire toggle/matrix listeners
         for key in list(hass.data[DOMAIN][entry.entry_id].keys()):
             if key.startswith("unsub_ent_"):
@@ -410,6 +387,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     pct = st.attributes.get("percentage") or 0
                     idx = 0 if pct == 0 else 1 if pct <= 33 else 2 if pct <= 66 else 3
                     await mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}m{mid}.val", str(idx))
+            # Update color tint for color-capable lights (main button text_color)
+            domain = entity_id.split(".")[0]
+            if domain == "light":
+                rgb = st.attributes.get("rgb_color")
+                color_temp = st.attributes.get("color_temp_kelvin") or st.attributes.get("color_temp")
+                color_hex = None
+                if isinstance(rgb, (list, tuple)) and len(rgb) == 3:
+                    try:
+                        color_hex = f"#{int(rgb[0]):02X}{int(rgb[1]):02X}{int(rgb[2]):02X}"
+                    except Exception:
+                        color_hex = None
+                elif isinstance(color_temp, int):
+                    color_hex = "#FFD8A8" if color_temp <= 3500 else "#D0E1FF"
+                if color_hex:
+                    for p, bid in ent_toggle_map.get(entity_id, []):
+                        await mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}b{bid}.text_color", color_hex)
         # subscribe for future changes and do an initial sync
         for ent in set(list(ent_toggle_map.keys()) + list(ent_matrix_map.keys())):
             def _make_cb(eid: str):
@@ -480,6 +473,47 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             val = -1
         # Relay button routing on 'up'
         if event == "up":
+            # Popup triggers (fan speed / light color)
+            pm = hass.data[DOMAIN][entry.entry_id].get("popup_map", {}).get(topic_tail)
+            if pm:
+                try:
+                    p = int(topic_tail.split("b")[0].replace("p", ""))
+                except Exception:
+                    p = pm.get("page") or 1
+                ent = pm.get("entity")
+                kind = pm.get("type")
+                btn_id = pm.get("btn_id")
+                # Hide any existing popup overlays for this page (known IDs 901..905)
+                for (typ, oid) in (("o",901),("o",902),("l",903),("m",904),("b",905)):
+                    try:
+                        hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}{typ}{oid}.hidden", "1"))
+                    except Exception:
+                        pass
+                # Overlay ids
+                bg_id = 901; box_id = 902; title_id = 903; matrix_id = 904; close_id = 905
+                hass.data[DOMAIN][entry.entry_id].setdefault("popup_overlay_ids", {}).setdefault(p, []).clear()
+                hass.data[DOMAIN][entry.entry_id]["popup_overlay_ids"][p].extend([bg_id, box_id, title_id, matrix_id, close_id])
+                # Background and container
+                hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":{bg_id},"x":0,"y":0,"w":480,"h":480,"bg_color":"#000000","bg_opa":160,"radius":0,"border_width":0}}'))
+                hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":{box_id},"x":60,"y":120,"w":360,"h":240,"bg_color":"#1E293B","bg_opa":255,"radius":16,"border_width":0}}'))
+                # Title
+                title = "Fan Speed" if kind == "fan_select" else "Light Color"
+                hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"label","id":{title_id},"x":60,"y":132,"w":360,"h":32,"text":"{title}","text_font":26,"align":"center","text_color":"#E5E7EB","bg_opa":0}}'))
+                # Options matrix
+                if kind == "fan_select":
+                    opts = "\"Off\",\"Low\",\"Med\",\"High\""
+                    meta = {"type": "fan_select", "entity": ent}
+                else:
+                    opts = "\"Off\",\"Red\",\"Green\",\"Blue\",\"Warm\",\"Cool\""
+                    meta = {"type": "light_color", "entity": ent, "btn_id": btn_id}
+                hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btnmatrix","id":{matrix_id},"x":92,"y":176,"w":296,"h":96,"text_font":20,"options":[{opts}],"toggle":1,"one_check":1,"val":0,"radius":10}}'))
+                # Register temporary matrix mapping
+                hass.data[DOMAIN][entry.entry_id].setdefault("matrix_map", {})[f"p{p}m{matrix_id}"] = meta
+                # Close button
+                hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btn","id":{close_id},"x":316,"y":312,"w":92,"h":36,"text":"Close","text_font":18,"radius":10,"bg_color":"#374151","text_color":"#FFFFFF","border_width":0}}'))
+                # Map close button
+                hass.data[DOMAIN][entry.entry_id].setdefault("popup_map", {})[f"p{p}b{close_id}"] = {"type": "close_popup", "page": p}
+                return
             if topic_tail == "p1b12":
                 payload = '{"state":"on"}' if val == 1 else '{"state":"off"}'
                 hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/output1", payload))
@@ -505,33 +539,87 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             hass.async_create_task(hass.services.async_call("fan", "turn_on", {"entity_id": ent}))
                         else:
                             hass.async_create_task(hass.services.async_call("fan", "turn_off", {"entity_id": ent}))
-        # Matrices (brightness / fan)
+                # Popup close handling
+                pm2 = hass.data[DOMAIN][entry.entry_id].get("popup_map", {}).get(topic_tail)
+                if pm2 and pm2.get("type") == "close_popup":
+                    pg = pm2.get("page")
+                    for (typ, oid) in (("o",901),("o",902),("l",903),("m",904),("b",905)):
+                        try:
+                            hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{pg}{typ}{oid}.hidden", "1"))
+                        except Exception:
+                            pass
+        # Matrices (popup selections)
         if topic_tail.startswith("p") and ("m" in topic_tail) and (event in ("up", "changed")):
             m = hass.data[DOMAIN][entry.entry_id].get("matrix_map", {}).get(topic_tail)
             if m:
                 ent = m["entity"]
                 if m["type"] == "light_dim":
-                    # val 0..3 => 25/50/75/100% brightness
-                    pct_map = {0: 25, 1: 50, 2: 75, 3: 100}
-                    pct = pct_map.get(int(val), 100)
-                    bri = int(round(pct * 255 / 100))
-                    hass.async_create_task(hass.services.async_call("light", "turn_on", {"entity_id": ent, "brightness": bri}))
+                    # Deprecated: removed from layout
+                    pass
                 elif m["type"] == "fan_preset":
-                    presets = m.get("presets", [])
-                    idx = int(val)
-                    if 0 <= idx < len(presets):
-                        mode = presets[idx]
-                        if mode.lower() == "off":
-                            hass.async_create_task(hass.services.async_call("fan", "turn_off", {"entity_id": ent}))
-                        else:
-                            hass.async_create_task(hass.services.async_call("fan", "set_preset_mode", {"entity_id": ent, "preset_mode": mode}))
+                    # Deprecated: removed from layout
+                    pass
                 elif m["type"] == "fan_pct":
+                    # Deprecated: removed from layout
+                    pass
+                elif m["type"] == "fan_select":
                     pct_map = {0: 0, 1: 33, 2: 66, 3: 100}
                     pct = pct_map.get(int(val), 0)
                     if pct == 0:
                         hass.async_create_task(hass.services.async_call("fan", "turn_off", {"entity_id": ent}))
                     else:
                         hass.async_create_task(hass.services.async_call("fan", "set_percentage", {"entity_id": ent, "percentage": pct}))
+                    # Hide popup overlay after selection
+                    try:
+                        p = int(topic_tail.split("m")[0].replace("p", ""))
+                    except Exception:
+                        p = 1
+                    for (typ, oid) in (("o",901),("o",902),("l",903),("m",904),("b",905)):
+                        try:
+                            hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}{typ}{oid}.hidden", "1"))
+                        except Exception:
+                            pass
+                elif m["type"] == "light_color":
+                    # 0..5 => Off, Red, Green, Blue, Warm, Cool
+                    idx = int(val)
+                    if idx == 0:
+                        hass.async_create_task(hass.services.async_call("light", "turn_off", {"entity_id": ent}))
+                        color_hex = None
+                    elif idx == 1:
+                        hass.async_create_task(hass.services.async_call("light", "turn_on", {"entity_id": ent, "rgb_color": [255, 0, 0]}))
+                        color_hex = "#FF0000"
+                    elif idx == 2:
+                        hass.async_create_task(hass.services.async_call("light", "turn_on", {"entity_id": ent, "rgb_color": [0, 255, 0]}))
+                        color_hex = "#00FF00"
+                    elif idx == 3:
+                        hass.async_create_task(hass.services.async_call("light", "turn_on", {"entity_id": ent, "rgb_color": [0, 0, 255]}))
+                        color_hex = "#0000FF"
+                    elif idx == 4:
+                        hass.async_create_task(hass.services.async_call("light", "turn_on", {"entity_id": ent, "color_temp_kelvin": 2700}))
+                        color_hex = "#FFD8A8"
+                    else:
+                        hass.async_create_task(hass.services.async_call("light", "turn_on", {"entity_id": ent, "color_temp_kelvin": 6500}))
+                        color_hex = "#D0E1FF"
+                    # Update main button tint if known
+                    bid = m.get("btn_id")
+                    try:
+                        p = int(topic_tail.split("m")[0].replace("p", ""))
+                    except Exception:
+                        p = 1
+                    if bid:
+                        if color_hex:
+                            hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}b{bid}.text_color", color_hex))
+                            hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}b{bid}.val", "1"))
+                        else:
+                            # Off => reset to default white
+                            hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}b{bid}.text_color", "#FFFFFF"))
+                            hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}b{bid}.val", "0"))
+                    # Hide overlay
+                    for (typ, oid) in (("o",901),("o",902),("l",903),("m",904),("b",905)):
+                        try:
+                            hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}{typ}{oid}.hidden", "1"))
+                        except Exception:
+                            pass
         # Title on page change (only page 1 for now)
         if topic_tail == "page":
             page = str(msg.payload)

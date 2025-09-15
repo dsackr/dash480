@@ -69,13 +69,8 @@ class Dash480ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             panel_id = user_input.get("panel")
             order = int(user_input.get("page_order") or 2)
             title = (user_input.get("title") or "").strip() or f"Page {order}"
-            # Slots 1..6
+            # Only set the title on creation; entities can be added later
             opts = {"title": title}
-            for i in range(1, 7):
-                key = f"s{i}"
-                v = (user_input.get(key) or "").strip()
-                if v:
-                    opts[key] = v
             return self.async_create_entry(
                 title=f"Page {order}: {title}",
                 data={"role": "page", "panel_entry_id": panel_id, "page_order": order},
@@ -87,13 +82,6 @@ class Dash480ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required("panel"): selector({"select": {"options": panel_options}}),
                 vol.Required("page_order", default=2): selector({"number": {"min": 2, "max": 99, "mode": "box"}}),
                 vol.Optional("title", default=""): selector({"text": {}}),
-                # Slots are truly optional; no defaults required.
-                vol.Optional("s1"): selector({"entity": {"domain": ["switch", "light", "fan", "sensor"]}}),
-                vol.Optional("s2"): selector({"entity": {"domain": ["switch", "light", "fan", "sensor"]}}),
-                vol.Optional("s3"): selector({"entity": {"domain": ["switch", "light", "fan", "sensor"]}}),
-                vol.Optional("s4"): selector({"entity": {"domain": ["switch", "light", "fan", "sensor"]}}),
-                vol.Optional("s5"): selector({"entity": {"domain": ["switch", "light", "fan", "sensor"]}}),
-                vol.Optional("s6"): selector({"entity": {"domain": ["switch", "light", "fan", "sensor"]}}),
             }
         )
         return self.async_show_form(step_id="page", data_schema=schema, errors=errors)

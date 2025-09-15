@@ -24,7 +24,10 @@ async def async_setup_entry(
             ]
         )
     else:
-        async_add_entities([Dash480PublishPageButton(hass, config_entry)])
+        async_add_entities([
+            Dash480PublishPageButton(hass, config_entry),
+            Dash480AddEntityButton(hass, config_entry),
+        ])
 
 
 class _BaseDashButton(ButtonEntity):
@@ -107,4 +110,44 @@ class Dash480PublishPageButton(_BaseDashButton):
                 "publish_all",
                 {"entry_id": panel_id},
                 blocking=True,
+            )
+
+
+class Dash480AddEntityButton(_BaseDashButton):
+    _attr_name = "Add Entity"
+    _attr_unique_id_suffix = "add_entity"
+    _attr_icon = "mdi:plus-box-multiple"
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._device_identifier}_{self._attr_unique_id_suffix}"
+
+    async def async_press(self) -> None:
+        # Read selected pending entity from page options
+        opts = {**self._entry.options}
+        ent = (opts.get("pending_entity") or "").strip()
+        if not ent:
+            return
+        # find first empty slot s1..s12
+        slot = None
+        for i in range(1, 13):
+            key = f"s{i}"
+            if not (opts.get(key) or "").strip():
+                slot = i
+                break
+        # if all full or entity already present, bail
+        if slot is None or ent in {opts.get(f"s{i}") for i in range(1, 13)}:
+            return
+        # update options: assign slot and clear pending
+        opts[f"s{slot}"] = ent
+        opts["pending_entity"] = ""
+        self.hass.config_entries.async_update_entry(self._entry, options=opts)
+        # Trigger panel publish_all to update device
+        panel_id = self._entry.data.get("panel_entry_id")
+        if panel_id:
+            await self.hass.services.async_call(
+                DOMAIN,
+                "publish_all",
+                {"entry_id": panel_id},
+                blocking=False,
             )
