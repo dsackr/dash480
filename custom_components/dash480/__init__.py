@@ -282,8 +282,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         ctrl_map: dict[str, str] = {}
         sensor_map: dict[str, list[tuple[int,int]]] = {}
         matrix_map: dict[str, dict] = {}
-        ent_toggle_map: dict[str, tuple[int,int]] = {}
-        ent_matrix_map: dict[str, tuple[int,int,dict]] = {}
+        ent_toggle_map: dict[str, list[tuple[int,int]]] = {}
+        ent_matrix_map: dict[str, list[tuple[int,int,dict]]] = {}
         for pe in page_entries:
             p = int(pe.data.get("page_order", 99))
             title = pe.options.get("title", f"Page {p}")
@@ -319,7 +319,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         f'{{"page":{p},"obj":"btn","id":{base3+2},"x":{x+20},"y":{y+40},"w":88,"h":64,"text":"\\uE425","text_font":64,"toggle":true,"radius":12,"bg_color":"#1E293B","bg_opa":255,"text_color":"#FFFFFF","border_width":0}}',
                     )
                     ctrl_map[f"p{p}b{base3+2}"] = ent
-                    ent_toggle_map[ent] = (p, base3+2)
+                    ent_toggle_map.setdefault(ent, []).append((p, base3+2))
                     if domain == "light":
                         # Brightness presets if supported
                         modes = st_ent.attributes.get("supported_color_modes", []) if st_ent else []
@@ -338,7 +338,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             )
                             mi = {"type": "light_dim", "entity": ent}
                             matrix_map[f"p{p}m{mid}"] = mi
-                            ent_matrix_map[ent] = (p, mid, mi)
+                            ent_matrix_map.setdefault(ent, []).append((p, mid, mi))
                     elif domain == "fan":
                         # Fan presets or percentage
                         presets = st_ent.attributes.get("preset_modes", []) if st_ent else []
@@ -352,7 +352,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             )
                             mi = {"type": "fan_preset", "entity": ent, "presets": presets}
                             matrix_map[f"p{p}m{mid}"] = mi
-                            ent_matrix_map[ent] = (p, mid, mi)
+                            ent_matrix_map.setdefault(ent, []).append((p, mid, mi))
                         else:
                             await mqtt.async_publish(
                                 hass,
@@ -361,7 +361,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             )
                             mi = {"type": "fan_pct", "entity": ent}
                             matrix_map[f"p{p}m{mid}"] = mi
-                            ent_matrix_map[ent] = (p, mid, mi)
+                            ent_matrix_map.setdefault(ent, []).append((p, mid, mi))
                 elif domain == "sensor":
                     # invisible button to hold value text (more reliable updates than label)
                     val = st_ent.state if st_ent and st_ent.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, "") else "--"
@@ -381,16 +381,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 except Exception:
                     pass
         async def _sync_entity_state(entity_id: str):
-            pbtn = ent_toggle_map.get(entity_id)
-            pmat = ent_matrix_map.get(entity_id)
             st = hass.states.get(entity_id)
-            if pbtn and st:
-                p, bid = pbtn
+            if not st:
+                return
+            # Update all toggle instances for this entity
+            for p, bid in ent_toggle_map.get(entity_id, []):
                 is_on = str(st.state).lower() == "on"
                 val = "1" if is_on else "0"
                 await mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}b{bid}.val", val)
-            if pmat and st:
-                p, mid, meta = pmat
+            # Update all matrices for this entity
+            for p, mid, meta in ent_matrix_map.get(entity_id, []):
                 if meta["type"] == "light_dim":
                     bri = st.attributes.get("brightness")
                     if isinstance(bri, int):
@@ -400,7 +400,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 elif meta["type"] == "fan_preset":
                     mode = (st.attributes.get("preset_mode") or "").strip()
                     presets = meta.get("presets", [])
-                    if mode:
+                    if mode and presets:
                         try:
                             idx = presets.index(mode)
                             await mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}m{mid}.val", str(idx))
