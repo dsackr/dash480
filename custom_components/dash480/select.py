@@ -1,7 +1,7 @@
 """Select platform for Dash480 (Entity Picker for pages)."""
 from __future__ import annotations
 
-from typing import List
+from typing import List, Dict
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
@@ -25,6 +25,7 @@ async def async_setup_entry(
     if role == "page":
         p = int(config_entry.data.get("page_order", 2))
         entities.append(Dash480AddEntitySelect(hass, config_entry, p))
+        entities.append(Dash480RemoveSlotSelect(hass, config_entry, p))
     async_add_entities(entities)
 
 
@@ -42,7 +43,9 @@ class Dash480AddEntitySelect(SelectEntity):
         self._attr_name = f"P{page} Add Entity"
         self._attr_icon = "mdi:playlist-plus"
         self._attr_unique_id = f"{self._device_identifier}_picker"
-        self._current: str | None = entry.options.get("pending_entity") or None
+        self._current_entity: str | None = entry.options.get("pending_entity") or None
+        self._current_label: str | None = None
+        self._labels_to_ids: Dict[str, str] = {}
         self._unsub_update = None
 
     @property
@@ -60,31 +63,121 @@ class Dash480AddEntitySelect(SelectEntity):
         page_opts = self._entry.options
         assigned = {str(page_opts.get(f"s{i}", "")).strip() for i in range(1, 13)}
         assigned = {a for a in assigned if a}
-        items: list[str] = []
-        # Note: Home Assistant's StateMachine returns a list of State objects
+        opts: list[tuple[str, str]] = []  # (label, entity_id)
         for st in self.hass.states.async_all():
             assert isinstance(st, State)
             d = st.entity_id.split(".")[0]
             if d in ALLOWED_DOMAINS and st.entity_id not in assigned:
-                items.append(st.entity_id)
-        items.sort()
-        return items
+                fname = st.attributes.get("friendly_name") or st.entity_id
+                label = f"{fname} ({st.entity_id})"
+                opts.append((label, st.entity_id))
+        opts.sort(key=lambda x: x[0].lower())
+        self._labels_to_ids = {label: eid for (label, eid) in opts}
+        # refresh current label from current entity
+        if self._current_entity:
+            for label, eid in opts:
+                if eid == self._current_entity:
+                    self._current_label = label
+                    break
+        else:
+            self._current_label = None
+        return [label for (label, _) in opts]
 
     @property
     def current_option(self) -> str | None:
-        return self._current
+        return self._current_label
 
     async def async_select_option(self, option: str) -> None:
         # Persist selected entity id as pending for the Add button
-        self._current = option
-        new_opts = {**self._entry.options, "pending_entity": option}
+        eid = self._labels_to_ids.get(option) or option
+        self._current_entity = eid
+        self._current_label = option
+        new_opts = {**self._entry.options, "pending_entity": eid}
         self.hass.config_entries.async_update_entry(self._entry, options=new_opts)
         self.async_write_ha_state()
 
     async def async_added_to_hass(self) -> None:
         async def _on_update(hass: HomeAssistant, updated: ConfigEntry):
             # Reflect when Add button clears pending_entity and when slots change (updates options list)
-            self._current = updated.options.get("pending_entity") or None
+            self._current_entity = updated.options.get("pending_entity") or None
+            self._current_label = None
+            self.async_write_ha_state()
+        self._unsub_update = self._entry.add_update_listener(_on_update)
+
+    async def async_will_remove_from_hass(self) -> None:
+        if self._unsub_update:
+            try:
+                self._unsub_update()
+            except Exception:
+                pass
+            self._unsub_update = None
+
+
+class Dash480RemoveSlotSelect(SelectEntity):
+    """List of populated slots to remove from this page."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, page: int) -> None:
+        self.hass = hass
+        self._entry = entry
+        self._page = page
+        self._device_identifier = f"dash480_page_{entry.entry_id}"
+        self._device_name = f"Dash480 Page {page}"
+        self._attr_name = f"P{page} Remove Slot"
+        self._attr_icon = "mdi:minus-box-multiple"
+        self._attr_unique_id = f"{self._device_identifier}_remove_picker"
+        self._current_label: str | None = None
+        self._labels_to_slot: Dict[str, int] = {}
+        self._unsub_update = None
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._device_identifier)},
+            name=self._device_name,
+            manufacturer="openHASP",
+            model="ESP32-S3 480x480",
+        )
+
+    @property
+    def options(self) -> list[str]:
+        labels: list[str] = []
+        mapping: Dict[str, int] = {}
+        for i in range(1, 13):
+            eid = (self._entry.options.get(f"s{i}") or "").strip()
+            if not eid:
+                continue
+            st = self.hass.states.get(eid)
+            fname = st.attributes.get("friendly_name") if st else None
+            lbl = f"Slot {i} — {fname or eid}"
+            labels.append(lbl)
+            mapping[lbl] = i
+        self._labels_to_slot = mapping
+        if self._current_label not in labels:
+            self._current_label = None
+        return labels
+
+    @property
+    def current_option(self) -> str | None:
+        return self._current_label
+
+    async def async_select_option(self, option: str) -> None:
+        self._current_label = option
+        slot = self._labels_to_slot.get(option)
+        new_opts = {**self._entry.options}
+        if slot is None:
+            new_opts["pending_remove_slot"] = None
+        else:
+            new_opts["pending_remove_slot"] = int(slot)
+        self.hass.config_entries.async_update_entry(self._entry, options=new_opts)
+        self.async_write_ha_state()
+
+    async def async_added_to_hass(self) -> None:
+        async def _on_update(hass: HomeAssistant, updated: ConfigEntry):
+            sel = updated.options.get("pending_remove_slot")
+            if sel is None:
+                self._current_label = None
             self.async_write_ha_state()
         self._unsub_update = self._entry.add_update_listener(_on_update)
 

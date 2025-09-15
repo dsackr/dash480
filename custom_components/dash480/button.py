@@ -27,6 +27,7 @@ async def async_setup_entry(
         async_add_entities([
             Dash480PublishPageButton(hass, config_entry),
             Dash480AddEntityButton(hass, config_entry),
+            Dash480RemoveEntityButton(hass, config_entry),
         ])
 
 
@@ -141,6 +142,44 @@ class Dash480AddEntityButton(_BaseDashButton):
         # update options: assign slot and clear pending
         opts[f"s{slot}"] = ent
         opts["pending_entity"] = ""
+        self.hass.config_entries.async_update_entry(self._entry, options=opts)
+        # Trigger panel publish_all to update device
+        panel_id = self._entry.data.get("panel_entry_id")
+        if panel_id:
+            await self.hass.services.async_call(
+                DOMAIN,
+                "publish_all",
+                {"entry_id": panel_id},
+                blocking=False,
+            )
+
+
+class Dash480RemoveEntityButton(_BaseDashButton):
+    _attr_name = "Remove Entity"
+    _attr_unique_id_suffix = "remove_entity"
+    _attr_icon = "mdi:minus-box-multiple"
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._device_identifier}_{self._attr_unique_id_suffix}"
+
+    async def async_press(self) -> None:
+        # Read selected slot from options; if none, remove the last populated slot
+        opts = {**self._entry.options}
+        sel = opts.get("pending_remove_slot")
+        slot: int | None = None
+        if isinstance(sel, int) and 1 <= sel <= 12:
+            slot = sel
+        else:
+            # find last non-empty slot
+            for i in range(12, 0, -1):
+                if (opts.get(f"s{i}") or "").strip():
+                    slot = i
+                    break
+        if slot is None:
+            return
+        opts[f"s{slot}"] = ""
+        opts["pending_remove_slot"] = None
         self.hass.config_entries.async_update_entry(self._entry, options=opts)
         # Trigger panel publish_all to update device
         panel_id = self._entry.data.get("panel_entry_id")
