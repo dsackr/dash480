@@ -189,8 +189,8 @@ def _home_layout_lines(node_name: str, title: str, temp_text: str) -> list[str]:
     lines.append('{"page":0,"id":90,"obj":"btn","action":{"down": "page prev"},"x":0,"y":430,"w":160,"h":50,"bg_color":"#2C3E50","text":"\\uE141","text_color":"#FFFFFF","radius":0,"border_side":0,"border_width":0,"bg_grad_dir":"none","outline_width":0,"shadow_width":0,"text_font":48}')
     lines.append('{"page":0,"id":91,"obj":"btn","action":{"down": "page 1"},"x":160,"y":430,"w":160,"h":50,"bg_color":"#2C3E50","text":"\\uE2DC","text_color":"#FFFFFF","radius":0,"border_side":0,"border_width":0,"bg_grad_dir":"none","outline_width":0,"shadow_width":0,"text_font":48}')
     lines.append('{"page":0,"id":92,"obj":"btn","action":{"down": "page next"},"x":320,"y":430,"w":160,"h":50,"bg_color":"#2C3E50","text":"\\uE142","text_color":"#FFFFFF","radius":0,"border_side":0,"border_width":0,"bg_grad_dir":"none","outline_width":0,"shadow_width":0,"text_font":48}')
-    # Home page background area
-    lines.append('{"page":1,"obj":"obj","id":800,"x":0,"y":56,"w":480,"h":374,"bg_color":"#0B1220","bg_opa":255,"click":false}')
+    # Home page background area (cover full screen; header/footer on page 0 overlay above)
+    lines.append('{"page":1,"obj":"obj","id":800,"x":0,"y":0,"w":480,"h":480,"bg_color":"#0B1220","bg_opa":255,"click":false}')
     # Large digital clock just below the header
     lines.append('{"page":1,"obj":"label","id":100,"x":0,"y":72,"w":480,"h":96,"text":"00:00","template":"%H:%M","text_font":96,"align":"center","text_color":"#E5E7EB","bg_opa":0}')
     # Three relay buttons (IDs 12/22/32) using working layout
@@ -288,7 +288,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             p = int(pe.data.get("page_order", 99))
             title = pe.options.get("title", f"Page {p}")
             await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"id":0,"obj":"page","prev":{pprev(p)},"next":{pnext(p)}}}')
-            await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":800,"x":0,"y":56,"w":480,"h":374,"bg_color":"#0B1220","bg_opa":255,"click":false}}')
+            await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":800,"x":0,"y":0,"w":480,"h":480,"bg_color":"#0B1220","bg_opa":255,"click":false}}')
             # page title update will occur on page change via router
             # slots
             slot_keys = [k for k in pe.options.keys() if k.startswith("s")] or []
