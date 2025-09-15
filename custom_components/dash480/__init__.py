@@ -297,20 +297,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 row = i0 // 3
                 x = 40 + col * 160
                 y = 120 + row * 140
-                base = p * 1000 + i0 * 10
+                # 3-digit ID scheme: first digit is page number, tens is slot (1-9), ones is part (0=label,1=bg,2=btn)
+                slot_digit = idx if idx <= 9 else 9
+                base3 = p * 100 + slot_digit * 10
                 st_ent = hass.states.get(ent)
                 label = st_ent.attributes.get("friendly_name", ent) if st_ent else ent
-                await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":{base+1},"x":{x},"y":{y},"w":128,"h":120,"radius":14,"bg_color":"#1E293B","bg_opa":255,"click":false}}')
-                await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"label","id":{base},"x":{x+8},"y":{y+8},"w":112,"h":22,"text":"{label}","text_font":18,"text_color":"#9CA3AF","bg_opa":0}}')
+                await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":{base3+1},"x":{x},"y":{y},"w":128,"h":120,"radius":14,"bg_color":"#1E293B","bg_opa":255,"click":false}}')
+                await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"label","id":{base3},"x":{x+8},"y":{y+8},"w":112,"h":22,"text":"{label}","text_font":18,"text_color":"#9CA3AF","bg_opa":0}}')
                 domain = ent.split(".")[0]
                 if domain in ("switch", "light", "fan"):
-                    await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btn","id":{base+2},"x":{x+20},"y":{y+40},"w":88,"h":64,"text":"\\uE425","text_font":64,"toggle":true,"radius":12,"bg_color":"#1E293B","text_color":"#FFFFFF","border_width":0}}')
-                    ctrl_map[f"p{p}b{base+2}"] = ent
+                    await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btn","id":{base3+2},"x":{x+20},"y":{y+40},"w":88,"h":64,"text":"\\uE425","text_font":64,"toggle":true,"radius":12,"bg_color":"#1E293B","bg_opa":255,"text_color":"#FFFFFF","border_width":0}}')
+                    ctrl_map[f"p{p}b{base3+2}"] = ent
                 elif domain == "sensor":
                     # invisible button to hold value text (more reliable updates than label)
                     val = st_ent.state if st_ent and st_ent.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, "") else "--"
-                    await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btn","id":{base+2},"x":{x+20},"y":{y+40},"w":88,"h":64,"text":"{val}","text_font":20,"toggle":false,"bg_opa":0,"border_width":0,"radius":0}}')
-                    sensor_map.setdefault(ent, []).append((p, base+2))
+                    await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btn","id":{base3+2},"x":{x+20},"y":{y+40},"w":88,"h":64,"text":"{val}","text_font":20,"toggle":false,"bg_opa":0,"border_width":0,"radius":0}}')
+                    sensor_map.setdefault(ent, []).append((p, base3+2))
         hass.data[DOMAIN][entry.entry_id]["ctrl_map"] = ctrl_map
         hass.data[DOMAIN][entry.entry_id]["sensor_map"] = sensor_map
         # rewire sensor listeners
