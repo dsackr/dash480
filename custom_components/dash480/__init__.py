@@ -127,7 +127,8 @@ async def async_setup(hass: HomeAssistant, config):
         for pe in page_entries:
             p = int(pe.data.get("page_order", 99))
             lines.append(f'{{"page":{p},"id":0,"obj":"page","prev":{pprev(p)},"next":{pnext(p)}}}')
-            lines.append(f'{{"page":{p},"obj":"obj","id":800,"x":0,"y":56,"w":480,"h":374,"bg_color":"#0B1220","bg_opa":255,"click":false}}')
+            # Match runtime layout background area for consistency
+            lines.append(f'{{"page":{p},"obj":"obj","id":800,"x":0,"y":0,"w":480,"h":480,"bg_color":"#0B1220","bg_opa":255,"click":false}}')
             for idx in range(1, 13):
                 key = f"s{idx}"
                 ent = pe.options.get(key, "")
@@ -138,14 +139,17 @@ async def async_setup(hass: HomeAssistant, config):
                 row = i0 // 3
                 x = 40 + col * 160
                 y = 120 + row * 140
-                base = p * 1000 + i0 * 10
+                # Use the same id scheme as runtime publish for readability in exports
+                slot_digit = idx if idx <= 9 else 9
+                base = p * 100 + slot_digit * 10
                 st_ent = hass.states.get(ent)
                 label = st_ent.attributes.get("friendly_name", ent) if st_ent else ent
                 lines.append(f'{{"page":{p},"obj":"obj","id":{base+1},"x":{x},"y":{y},"w":128,"h":120,"radius":14,"bg_color":"#1E293B","bg_opa":255,"click":false}}')
                 lines.append(f'{{"page":{p},"obj":"label","id":{base},"x":{x+8},"y":{y+8},"w":112,"h":22,"text":"{label}","text_font":18,"text_color":"#9CA3AF","bg_opa":0}}')
                 domain = ent.split(".")[0]
                 if domain in ("switch", "light", "fan"):
-                    lines.append(f'{{"page":{p},"obj":"btn","id":{base+2},"x":{x+20},"y":{y+40},"w":88,"h":64,"text":"\\uE425","text_font":64,"toggle":true,"radius":12,"bg_color":"#1E293B","bg_opa":255,"text_color":"#FFFFFF","border_width":0}}')
+                    icon = "\\uE4DC" if domain == "fan" else "\\uE425"
+                    lines.append(f'{{"page":{p},"obj":"btn","id":{base+2},"x":{x+20},"y":{y+40},"w":{88},"h":{64},"text":"{icon}","text_font":64,"toggle":true,"radius":12,"bg_color":"#1E293B","bg_opa":255,"text_color":"#FFFFFF","border_width":0}}')
                 elif domain == "sensor":
                     val = st_ent.state if st_ent and st_ent.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, "") else "--"
                     lines.append(f'{{"page":{p},"obj":"btn","id":{base+2},"x":{x+20},"y":{y+40},"w":88,"h":64,"text":"{val}","text_font":20,"toggle":false,"bg_opa":0,"border_width":0,"radius":0}}')
