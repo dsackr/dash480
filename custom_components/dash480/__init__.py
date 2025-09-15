@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from homeassistant.components import mqtt
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback, ServiceCall
@@ -85,6 +86,81 @@ async def async_setup(hass: HomeAssistant, config):
     hass.services.async_register(DOMAIN, "publish_home", svc_publish_home)
     hass.services.async_register(DOMAIN, "set_home_title", svc_set_home_title)
     hass.services.async_register(DOMAIN, "set_temp_entity", svc_set_temp_entity)
+
+    async def svc_dump_layout(call):
+        """Build the full JSONL layout and dump to a file (no publish)."""
+        eid = await _pick_entry_id(call)
+        if not eid:
+            return
+        entry = hass.config_entries.async_get_entry(eid)
+        if not entry or entry.data.get("role") != "panel":
+            _LOGGER.warning("Dash480: dump_layout requires a Panel entry_id")
+            return
+        node_name = entry.data.get("node_name")
+        home_title = entry.options.get("home_title", node_name)
+        temp_entity = entry.options.get("temp_entity", "")
+        # Header/footer
+        lines: list[str] = []
+        def _home_lines(title: str, temp_text: str) -> list[str]:
+            return _home_layout_lines(node_name, title, temp_text)
+        st = hass.states.get(temp_entity) if temp_entity else None
+        tval = "--"
+        if st and st.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, ""):
+            tval = str(st.state)
+        lines.extend(_home_lines(home_title, tval))
+        # Pages
+        all_entries = hass.config_entries.async_entries(DOMAIN)
+        page_entries = [e for e in all_entries if e.data.get("role") == "page" and e.data.get("panel_entry_id") == eid]
+        page_entries.sort(key=lambda e: int(e.data.get("page_order", 99)))
+        page_numbers = [int(e.data.get("page_order", 99)) for e in page_entries]
+        pages_ring = [1] + page_numbers
+        if page_numbers:
+            prev_home = page_numbers[-1]
+            next_home = page_numbers[0]
+            lines.append(f'{{"page":1,"id":0,"obj":"page","prev":{prev_home},"next":{next_home}}}')
+        def pprev(p):
+            idx = pages_ring.index(p)
+            return pages_ring[(idx - 1) % len(pages_ring)]
+        def pnext(p):
+            idx = pages_ring.index(p)
+            return pages_ring[(idx + 1) % len(pages_ring)]
+        for pe in page_entries:
+            p = int(pe.data.get("page_order", 99))
+            lines.append(f'{{"page":{p},"id":0,"obj":"page","prev":{pprev(p)},"next":{pnext(p)}}}')
+            lines.append(f'{{"page":{p},"obj":"obj","id":800,"x":0,"y":56,"w":480,"h":374,"bg_color":"#0B1220","bg_opa":255,"click":false}}')
+            for idx in range(1, 13):
+                key = f"s{idx}"
+                ent = pe.options.get(key, "")
+                if not ent:
+                    continue
+                i0 = idx - 1
+                col = i0 % 3
+                row = i0 // 3
+                x = 40 + col * 160
+                y = 120 + row * 140
+                base = p * 1000 + i0 * 10
+                st_ent = hass.states.get(ent)
+                label = st_ent.attributes.get("friendly_name", ent) if st_ent else ent
+                lines.append(f'{{"page":{p},"obj":"obj","id":{base+1},"x":{x},"y":{y},"w":128,"h":120,"radius":14,"bg_color":"#1E293B","bg_opa":255,"click":false}}')
+                lines.append(f'{{"page":{p},"obj":"label","id":{base},"x":{x+8},"y":{y+8},"w":112,"h":22,"text":"{label}","text_font":18,"text_color":"#9CA3AF","bg_opa":0}}')
+                domain = ent.split(".")[0]
+                if domain in ("switch", "light", "fan"):
+                    lines.append(f'{{"page":{p},"obj":"btn","id":{base+2},"x":{x+20},"y":{y+40},"w":88,"h":64,"text":"\\uE425","text_font":64,"toggle":true,"radius":12,"bg_color":"#1E293B","bg_opa":255,"text_color":"#FFFFFF","border_width":0}}')
+                elif domain == "sensor":
+                    val = st_ent.state if st_ent and st_ent.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, "") else "--"
+                    lines.append(f'{{"page":{p},"obj":"btn","id":{base+2},"x":{x+20},"y":{y+40},"w":88,"h":64,"text":"{val}","text_font":20,"toggle":false,"bg_opa":0,"border_width":0,"radius":0}}')
+        # Write file to config/dash480_exports
+        base = hass.config.path("dash480_exports")
+        os.makedirs(base, exist_ok=True)
+        path = os.path.join(base, f"dash480_{node_name}_pages.jsonl")
+        data = "\n".join(lines) + "\n"
+        def _write():
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(data)
+        await hass.async_add_executor_job(_write)
+        _LOGGER.info("Dash480: dump_layout wrote %s (%d lines)", path, len(lines))
+
+    hass.services.async_register(DOMAIN, "dump_layout", svc_dump_layout)
 
     store["services_registered"] = True
     return True
