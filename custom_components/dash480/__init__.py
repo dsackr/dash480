@@ -177,7 +177,8 @@ def _home_layout_lines(node_name: str, title: str, temp_text: str) -> list[str]:
     lines.append('{"page":1,"id":0,"obj":"page","prev":1,"next":1}')
     # Header (page 0)
     lines.append('{"page":0,"id":10,"obj":"obj","x":0,"y":0,"w":480,"h":56,"bg_color":"#1F2937","bg_opa":255}')
-    lines.append('{"page":0,"id":1,"obj":"label","x":12,"y":8,"w":120,"h":40,"text":"00:00","template":"%H:%M","text_font":24,"align":"left","text_color":"#E5E7EB","bg_opa":0}')
+    # Header left: date (replaces small clock)
+    lines.append('{"page":0,"id":1,"obj":"label","x":12,"y":8,"w":120,"h":40,"text":"--","template":"%b %d","text_font":24,"align":"left","text_color":"#E5E7EB","bg_opa":0}')
     # Center title (p0b2)
     t = title.replace('"', '\\"')
     lines.append(f'{{"page":0,"id":2,"obj":"btn","x":140,"y":8,"w":200,"h":40,"text":"{t}","text_font":22,"text_color":"#FFFFFF","bg_opa":0,"border_width":0,"radius":0,"outline_width":0,"shadow_width":0,"toggle":false}}')
@@ -190,6 +191,8 @@ def _home_layout_lines(node_name: str, title: str, temp_text: str) -> list[str]:
     lines.append('{"page":0,"id":92,"obj":"btn","action":{"down": "page next"},"x":320,"y":430,"w":160,"h":50,"bg_color":"#2C3E50","text":"\\uE142","text_color":"#FFFFFF","radius":0,"border_side":0,"text_font":48}')
     # Home page background area
     lines.append('{"page":1,"obj":"obj","id":800,"x":0,"y":56,"w":480,"h":374,"bg_color":"#0B1220","bg_opa":255,"click":false}')
+    # Large digital clock just below the header
+    lines.append('{"page":1,"obj":"label","id":100,"x":0,"y":72,"w":480,"h":96,"text":"00:00","template":"%H:%M","text_font":96,"align":"center","text_color":"#E5E7EB","bg_opa":0}')
     # Three relay buttons (IDs 12/22/32) using working layout
     lines.append('{"page":1,"obj":"btn","id":12,"x":25,"y":300,"w":120,"h":60,"text":"Relay 1","text_font":26,"toggle":true,"groupid":1,"radius":8,"bg_color":"#374151","text_color":"#FFFFFF","border_width":0}')
     lines.append('{"page":1,"obj":"btn","id":22,"x":175,"y":300,"w":120,"h":60,"text":"Relay 2","text_font":26,"toggle":true,"groupid":2,"radius":8,"bg_color":"#374151","text_color":"#FFFFFF","border_width":0}')
@@ -278,6 +281,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Draw each page
         ctrl_map: dict[str, str] = {}
         sensor_map: dict[str, list[tuple[int,int]]] = {}
+        matrix_map: dict[str, dict] = {}
+        ent_toggle_map: dict[str, tuple[int,int]] = {}
+        ent_matrix_map: dict[str, tuple[int,int,dict]] = {}
         for pe in page_entries:
             p = int(pe.data.get("page_order", 99))
             title = pe.options.get("title", f"Page {p}")
@@ -306,8 +312,56 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"label","id":{base3},"x":{x+8},"y":{y+8},"w":112,"h":22,"text":"{label}","text_font":18,"text_color":"#9CA3AF","bg_opa":0}}')
                 domain = ent.split(".")[0]
                 if domain in ("switch", "light", "fan"):
-                    await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btn","id":{base3+2},"x":{x+20},"y":{y+40},"w":88,"h":64,"text":"\\uE425","text_font":64,"toggle":true,"radius":12,"bg_color":"#1E293B","bg_opa":255,"text_color":"#FFFFFF","border_width":0}}')
+                    # Common main toggle
+                    await mqtt.async_publish(
+                        hass,
+                        f"hasp/{node_name}/command/jsonl",
+                        f'{{"page":{p},"obj":"btn","id":{base3+2},"x":{x+20},"y":{y+40},"w":88,"h":64,"text":"\\uE425","text_font":64,"toggle":true,"radius":12,"bg_color":"#1E293B","bg_opa":255,"text_color":"#FFFFFF","border_width":0}}',
+                    )
                     ctrl_map[f"p{p}b{base3+2}"] = ent
+                    ent_toggle_map[ent] = (p, base3+2)
+                    if domain == "light":
+                        # Brightness presets if supported
+                        modes = st_ent.attributes.get("supported_color_modes", []) if st_ent else []
+                        has_bri = False
+                        try:
+                            m = ",".join(modes).lower()
+                            has_bri = ("brightness" in m) or ("xy" in m) or ("hs" in m) or ("rgb" in m)
+                        except Exception:
+                            has_bri = False
+                        if has_bri:
+                            mid = base3 + 3
+                            await mqtt.async_publish(
+                                hass,
+                                f"hasp/{node_name}/command/jsonl",
+                                f'{{"page":{p},"obj":"btnmatrix","id":{mid},"x":{x},"y":{y+110},"w":128,"h":36,"text_font":16,"options":["25%","50%","75%","100%"],"toggle":1,"one_check":1,"val":0,"radius":8}}',
+                            )
+                            mi = {"type": "light_dim", "entity": ent}
+                            matrix_map[f"p{p}m{mid}"] = mi
+                            ent_matrix_map[ent] = (p, mid, mi)
+                    elif domain == "fan":
+                        # Fan presets or percentage
+                        presets = st_ent.attributes.get("preset_modes", []) if st_ent else []
+                        mid = base3 + 3
+                        if presets:
+                            opts = ",".join([f'"{o}"' for o in presets])
+                            await mqtt.async_publish(
+                                hass,
+                                f"hasp/{node_name}/command/jsonl",
+                                f'{{"page":{p},"obj":"btnmatrix","id":{mid},"x":{x},"y":{y+110},"w":128,"h":36,"text_font":16,"options":[{opts}],"toggle":1,"one_check":1,"val":0,"radius":8}}',
+                            )
+                            mi = {"type": "fan_preset", "entity": ent, "presets": presets}
+                            matrix_map[f"p{p}m{mid}"] = mi
+                            ent_matrix_map[ent] = (p, mid, mi)
+                        else:
+                            await mqtt.async_publish(
+                                hass,
+                                f"hasp/{node_name}/command/jsonl",
+                                f'{{"page":{p},"obj":"btnmatrix","id":{mid},"x":{x},"y":{y+110},"w":128,"h":36,"text_font":16,"options":["Off","Low","Med","High"],"toggle":1,"one_check":1,"val":0,"radius":8}}',
+                            )
+                            mi = {"type": "fan_pct", "entity": ent}
+                            matrix_map[f"p{p}m{mid}"] = mi
+                            ent_matrix_map[ent] = (p, mid, mi)
                 elif domain == "sensor":
                     # invisible button to hold value text (more reliable updates than label)
                     val = st_ent.state if st_ent and st_ent.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, "") else "--"
@@ -315,6 +369,57 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     sensor_map.setdefault(ent, []).append((p, base3+2))
         hass.data[DOMAIN][entry.entry_id]["ctrl_map"] = ctrl_map
         hass.data[DOMAIN][entry.entry_id]["sensor_map"] = sensor_map
+        hass.data[DOMAIN][entry.entry_id]["matrix_map"] = matrix_map
+        hass.data[DOMAIN][entry.entry_id]["ent_toggle_map"] = ent_toggle_map
+        hass.data[DOMAIN][entry.entry_id]["ent_matrix_map"] = ent_matrix_map
+        # rewire toggle/matrix listeners
+        for key in list(hass.data[DOMAIN][entry.entry_id].keys()):
+            if key.startswith("unsub_ent_"):
+                u = hass.data[DOMAIN][entry.entry_id].pop(key)
+                try:
+                    u()
+                except Exception:
+                    pass
+        async def _sync_entity_state(entity_id: str):
+            pbtn = ent_toggle_map.get(entity_id)
+            pmat = ent_matrix_map.get(entity_id)
+            st = hass.states.get(entity_id)
+            if pbtn and st:
+                p, bid = pbtn
+                is_on = str(st.state).lower() == "on"
+                val = "1" if is_on else "0"
+                await mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}b{bid}.val", val)
+            if pmat and st:
+                p, mid, meta = pmat
+                if meta["type"] == "light_dim":
+                    bri = st.attributes.get("brightness")
+                    if isinstance(bri, int):
+                        pct = max(1, min(100, int(round(bri * 100 / 255))))
+                        idx = 0 if pct <= 25 else 1 if pct <= 50 else 2 if pct <= 75 else 3
+                        await mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}m{mid}.val", str(idx))
+                elif meta["type"] == "fan_preset":
+                    mode = (st.attributes.get("preset_mode") or "").strip()
+                    presets = meta.get("presets", [])
+                    if mode:
+                        try:
+                            idx = presets.index(mode)
+                            await mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}m{mid}.val", str(idx))
+                        except ValueError:
+                            pass
+                elif meta["type"] == "fan_pct":
+                    pct = st.attributes.get("percentage") or 0
+                    idx = 0 if pct == 0 else 1 if pct <= 33 else 2 if pct <= 66 else 3
+                    await mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}m{mid}.val", str(idx))
+        # subscribe for future changes and do an initial sync
+        for ent in set(list(ent_toggle_map.keys()) + list(ent_matrix_map.keys())):
+            def _make_cb(eid: str):
+                async def _cb(event):
+                    await _sync_entity_state(eid)
+                return _cb
+            cb = _make_cb(ent)
+            unsub = async_track_state_change_event(hass, [ent], cb)
+            hass.data[DOMAIN][entry.entry_id][f"unsub_ent_{ent}"] = unsub
+            await _sync_entity_state(ent)
         # rewire sensor listeners
         # remove previous
         for key in list(hass.data[DOMAIN][entry.entry_id].keys()):
@@ -400,6 +505,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             hass.async_create_task(hass.services.async_call("fan", "turn_on", {"entity_id": ent}))
                         else:
                             hass.async_create_task(hass.services.async_call("fan", "turn_off", {"entity_id": ent}))
+        # Matrices (brightness / fan)
+        if topic_tail.startswith("p") and ("m" in topic_tail) and (event in ("up", "changed")):
+            m = hass.data[DOMAIN][entry.entry_id].get("matrix_map", {}).get(topic_tail)
+            if m:
+                ent = m["entity"]
+                if m["type"] == "light_dim":
+                    # val 0..3 => 25/50/75/100% brightness
+                    pct_map = {0: 25, 1: 50, 2: 75, 3: 100}
+                    pct = pct_map.get(int(val), 100)
+                    bri = int(round(pct * 255 / 100))
+                    hass.async_create_task(hass.services.async_call("light", "turn_on", {"entity_id": ent, "brightness": bri}))
+                elif m["type"] == "fan_preset":
+                    presets = m.get("presets", [])
+                    idx = int(val)
+                    if 0 <= idx < len(presets):
+                        mode = presets[idx]
+                        if mode.lower() == "off":
+                            hass.async_create_task(hass.services.async_call("fan", "turn_off", {"entity_id": ent}))
+                        else:
+                            hass.async_create_task(hass.services.async_call("fan", "set_preset_mode", {"entity_id": ent, "preset_mode": mode}))
+                elif m["type"] == "fan_pct":
+                    pct_map = {0: 0, 1: 33, 2: 66, 3: 100}
+                    pct = pct_map.get(int(val), 0)
+                    if pct == 0:
+                        hass.async_create_task(hass.services.async_call("fan", "turn_off", {"entity_id": ent}))
+                    else:
+                        hass.async_create_task(hass.services.async_call("fan", "set_percentage", {"entity_id": ent, "percentage": pct}))
         # Title on page change (only page 1 for now)
         if topic_tail == "page":
             page = str(msg.payload)
