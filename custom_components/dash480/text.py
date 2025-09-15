@@ -151,6 +151,18 @@ class Dash480PageTitleText(_BaseDashText):
         self._attr_native_value = value
         self.async_write_ha_state()
 
+        panel_entry_id = self.config_entry.data.get("panel_entry_id")
+        if panel_entry_id:
+            await self.hass.services.async_call(
+                DOMAIN, "publish_all", {"entry_id": panel_entry_id}, blocking=False
+            )
+
+        panel_entry_id = self.config_entry.data.get("panel_entry_id")
+        if panel_entry_id:
+            await self.hass.services.async_call(
+                DOMAIN, "publish_all", {"entry_id": panel_entry_id}, blocking=False
+            )
+
 
 class Dash480SlotEntityText(_BaseDashText):
     _attr_entity_category = EntityCategory.CONFIG
