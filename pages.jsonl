@@ -3,7 +3,7 @@
 
 // Header (no temp on the right)
 {"page":0,"id":10,"obj":"obj","x":0,"y":0,"w":480,"h":56,"bg_color":"#1F2937","bg_opa":255,"radius":0,"border_width":0,"bg_grad_dir":"none","outline_width":0,"shadow_width":0}
-{"page":0,"id":2,"obj":"btn","x":140,"y":8,"w":200,"h":40,"text":"Home","text_font":35,"text_color":"#FFFFFF","bg_opa":0,"border_width":0,"radius":0,"outline_width":0,"shadow_width":0,"toggle":false}
+{"page":0,"id":2,"obj":"btn","x":140,"y":8,"w":200,"h":40,"text":"%Hostname%","text_font":35,"text_color":"#FFFFFF","bg_opa":0,"border_width":0,"radius":0,"outline_width":0,"shadow_width":0,"toggle":false}
 
 // Home page background
 {"page":1,"obj":"obj","id":800,"x":0,"y":0,"w":480,"h":480,"bg_color":"#0B1220","bg_opa":255,"click":false}
