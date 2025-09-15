@@ -1,21 +1,21 @@
 {"page":0,"id":0,"obj":"page"}
 {"page":1,"id":0,"obj":"page","prev":1,"next":1}
 
-# Header (no temp on the right)
+// Header (no temp on the right)
 {"page":0,"id":10,"obj":"obj","x":0,"y":0,"w":480,"h":56,"bg_color":"#1F2937","bg_opa":255,"radius":0,"border_width":0,"bg_grad_dir":"none","outline_width":0,"shadow_width":0}
 {"page":0,"id":2,"obj":"btn","x":140,"y":8,"w":200,"h":40,"text":"Home","text_font":35,"text_color":"#FFFFFF","bg_opa":0,"border_width":0,"radius":0,"outline_width":0,"shadow_width":0,"toggle":false}
 
-# Home page background
+// Home page background
 {"page":1,"obj":"obj","id":800,"x":0,"y":56,"w":480,"h":374,"bg_color":"#0B1220","bg_opa":255,"click":false}
 
-# Large digital clock (HH:MM) under the header
+// Large digital clock (HH:MM) under the header
 {"page":1,"obj":"label","id":100,"x":0,"y":72,"w":480,"h":96,"text":"00:00","template":"%H:%M","text_font":96,"align":"center","text_color":"#E5E7EB","bg_opa":0}
 
-# Three relay buttons (group 1/2/3)
+// Three relay buttons (group 1/2/3)
 {"page":1,"obj":"btn","id":12,"x":25,"y":300,"w":120,"h":60,"text":"Relay 1","text_font":26,"toggle":true,"groupid":1,"radius":8,"bg_color":"#374151","text_color":"#FFFFFF","border_width":0}
 {"page":1,"obj":"btn","id":22,"x":175,"y":300,"w":120,"h":60,"text":"Relay 2","text_font":26,"toggle":true,"groupid":2,"radius":8,"bg_color":"#374151","text_color":"#FFFFFF","border_width":0}
 {"page":1,"obj":"btn","id":32,"x":325,"y":300,"w":120,"h":60,"text":"Relay 3","text_font":26,"toggle":true,"groupid":3,"radius":8,"bg_color":"#374151","text_color":"#FFFFFF","border_width":0}
 
-# Footer status bar (no navigation)
+// Footer status bar (no navigation)
 {"page":0,"id":20,"obj":"obj","x":0,"y":430,"w":480,"h":50,"bg_color":"#2C3E50","bg_opa":255,"radius":0,"border_width":0,"bg_grad_dir":"none","outline_width":0,"shadow_width":0}
 {"page":0,"id":21,"obj":"label","x":0,"y":430,"w":480,"h":50,"text":"Waiting on Home Assistant...","text_font":35,"align":"center","text_color":"#FFFFFF","bg_opa":0}
