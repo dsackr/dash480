@@ -625,7 +625,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}{typ}{oid}.hidden", "1"))
                         except Exception:
                             pass
-        # Title on page change (only page 1 for now)
+        # Title on page change and ensure any popups are hidden
         if topic_tail == "page":
             page = str(msg.payload)
             if page.isdigit():
@@ -635,6 +635,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 page_entry = next((e for e in all_entries if e.data.get("role") == "page" and e.data.get("panel_entry_id") == entry.entry_id and int(e.data.get("page_order", 0)) == p), None)
                 title = home_title if p == 1 else (page_entry.options.get("title", f"Page {p}") if page_entry else f"Page {p}")
                 hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p0b2.text", title))
+                # Defensive: hide any overlay remnants on all known pages
+                for pp in [1] + [int(e.data.get("page_order", 0)) for e in all_entries if e.data.get("role") == "page" and e.data.get("panel_entry_id") == entry.entry_id]:
+                    for (typ, oid) in (("o",901),("o",902),("l",903),("m",904),("b",905)):
+                        try:
+                            hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{pp}{typ}{oid}.hidden", "1"))
+                        except Exception:
+                            pass
 
     unsub_events = await mqtt.async_subscribe(hass, f"hasp/{node_name}/state/#", _state_event)
     hass.data[DOMAIN][entry.entry_id]["unsub_events"] = unsub_events
