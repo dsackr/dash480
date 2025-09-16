@@ -5,6 +5,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers import device_registry as dr
 
 from .const import DOMAIN
 
@@ -161,6 +162,25 @@ class Dash480PageTitleText(_BaseDashText):
             )
 
     async def async_added_to_hass(self) -> None:
+        # Align Page device area with Panel device area (if available)
+        try:
+            panel_entry_id = self.config_entry.data.get("panel_entry_id")
+            if panel_entry_id:
+                reg = dr.async_get(self.hass)
+                # Panel device identifier
+                from homeassistant.config_entries import ConfigEntry
+                panel_entry: ConfigEntry | None = self.hass.config_entries.async_get_entry(panel_entry_id)
+                if panel_entry:
+                    node = panel_entry.data.get("node_name")
+                    panel_dev = reg.async_get_device(identifiers={(DOMAIN, f"dash480_{node}")}) if node else None
+                else:
+                    panel_dev = None
+                # Page device identifier
+                page_dev = reg.async_get_device(identifiers={(DOMAIN, f"dash480_page_{self.config_entry.entry_id}")})
+                if panel_dev and page_dev and page_dev.area_id != panel_dev.area_id:
+                    reg.async_update_device(page_dev.id, area_id=panel_dev.area_id)
+        except Exception:
+            pass
         async def _on_update(hass: HomeAssistant, updated: ConfigEntry):
             # keep in sync with options changes from other entities/buttons
             self._attr_native_value = updated.options.get("title", f"Page {self.page}")

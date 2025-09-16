@@ -88,12 +88,37 @@ class Dash480AddEntitySelect(SelectEntity):
         return self._current_label
 
     async def async_select_option(self, option: str) -> None:
-        # Persist selected entity id as pending for the Add button
+        # Persist selection and immediately add to first empty slot, then republish
         eid = self._labels_to_ids.get(option) or option
         self._current_entity = eid
         self._current_label = option
-        new_opts = {**self._entry.options, "pending_entity": eid}
-        self.hass.config_entries.async_update_entry(self._entry, options=new_opts)
+        opts = {**self._entry.options}
+        # find first empty slot s1..s12
+        slot: int | None = None
+        for i in range(1, 13):
+            key = f"s{i}"
+            if not (opts.get(key) or "").strip():
+                slot = i
+                break
+        if slot is None:
+            # No available slots; just store pending
+            opts["pending_entity"] = eid
+            self.hass.config_entries.async_update_entry(self._entry, options=opts)
+            self.async_write_ha_state()
+            return
+        # assign and clear pending
+        opts[f"s{slot}"] = eid
+        opts["pending_entity"] = ""
+        self.hass.config_entries.async_update_entry(self._entry, options=opts)
+        # trigger publish
+        panel_id = self._entry.data.get("panel_entry_id")
+        if panel_id:
+            await self.hass.services.async_call(
+                DOMAIN,
+                "publish_all",
+                {"entry_id": panel_id},
+                blocking=False,
+            )
         self.async_write_ha_state()
 
     async def async_added_to_hass(self) -> None:
@@ -163,14 +188,26 @@ class Dash480RemoveSlotSelect(SelectEntity):
         return self._current_label
 
     async def async_select_option(self, option: str) -> None:
+        # Immediately remove the selected slot and republish
         self._current_label = option
         slot = self._labels_to_slot.get(option)
-        new_opts = {**self._entry.options}
+        opts = {**self._entry.options}
         if slot is None:
-            new_opts["pending_remove_slot"] = None
-        else:
-            new_opts["pending_remove_slot"] = int(slot)
-        self.hass.config_entries.async_update_entry(self._entry, options=new_opts)
+            opts["pending_remove_slot"] = None
+            self.hass.config_entries.async_update_entry(self._entry, options=opts)
+            self.async_write_ha_state()
+            return
+        opts[f"s{slot}"] = ""
+        opts["pending_remove_slot"] = None
+        self.hass.config_entries.async_update_entry(self._entry, options=opts)
+        panel_id = self._entry.data.get("panel_entry_id")
+        if panel_id:
+            await self.hass.services.async_call(
+                DOMAIN,
+                "publish_all",
+                {"entry_id": panel_id},
+                blocking=False,
+            )
         self.async_write_ha_state()
 
     async def async_added_to_hass(self) -> None:

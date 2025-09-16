@@ -30,8 +30,8 @@ class Dash480ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             {
                 vol.Required("role", default="panel"): selector(
                     {"select": {"options": [
-                        {"label": "Panel (screen)", "value": "panel"},
                         {"label": "Page (tiles for a panel)", "value": "page"},
+                        {"label": "Panel (screen)", "value": "panel"},
                     ]}}
                 )
             }
@@ -67,21 +67,28 @@ class Dash480ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None and not errors:
             panel_id = user_input.get("panel")
-            order = int(user_input.get("page_order") or 2)
-            title = (user_input.get("title") or "").strip() or f"Page {order}"
-            # Only set the title on creation; entities can be added later
-            opts = {"title": title}
-            return self.async_create_entry(
-                title=f"Page {order}: {title}",
-                data={"role": "page", "panel_entry_id": panel_id, "page_order": order},
-                options=opts,
-            )
+            # Auto-pick next available page number 2..9 for this panel
+            pages = [e for e in self._async_current_entries() if e.data.get("role") == "page" and e.data.get("panel_entry_id") == panel_id]
+            used = {int(e.data.get("page_order", 0)) for e in pages if str(e.data.get("page_order", "")).isdigit()}
+            order = None
+            for n in range(2, 10):
+                if n not in used:
+                    order = n
+                    break
+            if order is None:
+                errors["base"] = "max_pages"
+            else:
+                title = (user_input.get("title") or "").strip() or f"Page {order}"
+                opts = {"title": title}
+                return self.async_create_entry(
+                    title=f"Page {order}: {title}",
+                    data={"role": "page", "panel_entry_id": panel_id, "page_order": order},
+                    options=opts,
+                )
 
         schema = vol.Schema(
             {
                 vol.Required("panel"): selector({"select": {"options": panel_options}}),
-                # Limit to 8 user pages: 2..9 (page 1 is Home)
-                vol.Required("page_order", default=2): selector({"number": {"min": 2, "max": 9, "mode": "box"}}),
                 vol.Optional("title", default=""): selector({"text": {}}),
             }
         )
