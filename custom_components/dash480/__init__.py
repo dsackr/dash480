@@ -178,7 +178,8 @@ def _home_layout_lines(node_name: str, title: str, temp_text: str) -> list[str]:
     lines: list[str] = []
     # Ensure page 0 and 1 exist
     lines.append('{"page":0,"id":0,"obj":"page"}')
-    lines.append('{"page":1,"id":0,"obj":"page","prev":1,"next":1}')
+    # Define page 1 without prev/next; navigation is set later by publisher when pages are known
+    lines.append('{"page":1,"id":0,"obj":"page"}')
     # Header (page 0)
     lines.append('{"page":0,"id":10,"obj":"obj","x":0,"y":0,"w":480,"h":56,"bg_color":"#1F2937","bg_opa":255,"radius":0,"border_width":0,"bg_grad_dir":"none","outline_width":0,"shadow_width":0}')
     # Header left: date (replaces small clock)
