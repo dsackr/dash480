@@ -194,14 +194,14 @@ def _home_layout_lines(node_name: str, title: str, temp_text: str) -> list[str]:
     lines.append('{"page":0,"id":90,"obj":"btn","action":{"down": "page prev"},"x":0,"y":430,"w":160,"h":50,"bg_color":"#2C3E50","text":"\\uE141","text_color":"#FFFFFF","radius":0,"border_side":0,"border_width":0,"bg_grad_dir":"none","outline_width":0,"shadow_width":0,"text_font":48}')
     lines.append('{"page":0,"id":91,"obj":"btn","action":{"down": "page 1"},"x":160,"y":430,"w":160,"h":50,"bg_color":"#2C3E50","text":"\\uE2DC","text_color":"#FFFFFF","radius":0,"border_side":0,"border_width":0,"bg_grad_dir":"none","outline_width":0,"shadow_width":0,"text_font":48}')
     lines.append('{"page":0,"id":92,"obj":"btn","action":{"down": "page next"},"x":320,"y":430,"w":160,"h":50,"bg_color":"#2C3E50","text":"\\uE142","text_color":"#FFFFFF","radius":0,"border_side":0,"border_width":0,"bg_grad_dir":"none","outline_width":0,"shadow_width":0,"text_font":48}')
-    # Home page background area (cover full screen; header/footer on page 0 overlay above)
-    lines.append('{"page":1,"obj":"obj","id":800,"x":0,"y":0,"w":480,"h":480,"bg_color":"#0B1220","bg_opa":255,"click":false}')
+    # Home page background area (use ID within 100..199 range)
+    lines.append('{"page":1,"obj":"obj","id":180,"x":0,"y":0,"w":480,"h":480,"bg_color":"#0B1220","bg_opa":255,"click":false}')
     # Large digital clock just below the header
     lines.append('{"page":1,"obj":"label","id":100,"x":0,"y":72,"w":480,"h":96,"text":"00:00","template":"%H:%M","text_font":96,"align":"center","text_color":"#E5E7EB","bg_opa":0}')
-    # Three relay buttons (IDs 12/22/32) using working layout
-    lines.append('{"page":1,"obj":"btn","id":12,"x":25,"y":300,"w":120,"h":60,"text":"Relay 1","text_font":26,"toggle":true,"groupid":1,"radius":8,"bg_color":"#374151","text_color":"#FFFFFF","border_width":0}')
-    lines.append('{"page":1,"obj":"btn","id":22,"x":175,"y":300,"w":120,"h":60,"text":"Relay 2","text_font":26,"toggle":true,"groupid":2,"radius":8,"bg_color":"#374151","text_color":"#FFFFFF","border_width":0}')
-    lines.append('{"page":1,"obj":"btn","id":32,"x":325,"y":300,"w":120,"h":60,"text":"Relay 3","text_font":26,"toggle":true,"groupid":3,"radius":8,"bg_color":"#374151","text_color":"#FFFFFF","border_width":0}')
+    # Three relay buttons within 100..199 range (112/122/132)
+    lines.append('{"page":1,"obj":"btn","id":112,"x":25,"y":300,"w":120,"h":60,"text":"Relay 1","text_font":26,"toggle":true,"groupid":1,"radius":8,"bg_color":"#374151","text_color":"#FFFFFF","border_width":0}')
+    lines.append('{"page":1,"obj":"btn","id":122,"x":175,"y":300,"w":120,"h":60,"text":"Relay 2","text_font":26,"toggle":true,"groupid":2,"radius":8,"bg_color":"#374151","text_color":"#FFFFFF","border_width":0}')
+    lines.append('{"page":1,"obj":"btn","id":132,"x":325,"y":300,"w":120,"h":60,"text":"Relay 3","text_font":26,"toggle":true,"groupid":3,"radius":8,"bg_color":"#374151","text_color":"#FFFFFF","border_width":0}')
     return lines
 
 
@@ -295,7 +295,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             p = int(pe.data.get("page_order", 99))
             title = pe.options.get("title", f"Page {p}")
             await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"id":0,"obj":"page","prev":{pprev(p)},"next":{pnext(p)}}}')
-            await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":800,"x":0,"y":0,"w":480,"h":480,"bg_color":"#0B1220","bg_opa":255,"click":false}}')
+            # Page background ID within p*100..p*100+99
+            await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":{p*100+80},"x":0,"y":0,"w":480,"h":480,"bg_color":"#0B1220","bg_opa":255,"click":false}}')
             # page title update will occur on page change via router
             # slots
             slot_keys = [k for k in pe.options.keys() if k.startswith("s")] or []
@@ -494,8 +495,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}{typ}{oid}.hidden", "1"))
                     except Exception:
                         pass
-                # Overlay ids
-                bg_id = 901; box_id = 902; title_id = 903; matrix_id = 904; close_id = 905
+                # Overlay ids within the page range to avoid conflicts: use p*100+193..197
+                base_overlay = p * 100 + 193
+                bg_id = base_overlay + 0
+                box_id = base_overlay + 1
+                title_id = base_overlay + 2
+                matrix_id = base_overlay + 3
+                close_id = base_overlay + 4
                 hass.data[DOMAIN][entry.entry_id].setdefault("popup_overlay_ids", {}).setdefault(p, []).clear()
                 hass.data[DOMAIN][entry.entry_id]["popup_overlay_ids"][p].extend([bg_id, box_id, title_id, matrix_id, close_id])
                 # Background and container
@@ -519,13 +525,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 # Map close button
                 hass.data[DOMAIN][entry.entry_id].setdefault("popup_map", {})[f"p{p}b{close_id}"] = {"type": "close_popup", "page": p}
                 return
-            if topic_tail == "p1b12":
+            # Home relays (page 1 IDs moved into 100..199 range)
+            if topic_tail == "p1b112":
                 payload = '{"state":"on"}' if val == 1 else '{"state":"off"}'
                 hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/output1", payload))
-            elif topic_tail == "p1b22":
+            elif topic_tail == "p1b122":
                 payload = '{"state":"on"}' if val == 1 else '{"state":"off"}'
                 hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/output2", payload))
-            elif topic_tail == "p1b32":
+            elif topic_tail == "p1b132":
                 payload = '{"state":"on"}' if val == 1 else '{"state":"off"}'
                 hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/output40", payload))
             else:
@@ -548,9 +555,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 pm2 = hass.data[DOMAIN][entry.entry_id].get("popup_map", {}).get(topic_tail)
                 if pm2 and pm2.get("type") == "close_popup":
                     pg = pm2.get("page")
-                    for (typ, oid) in (("o",901),("o",902),("l",903),("m",904),("b",905)):
+                    # Hide any known overlay ids in this page's range
+                    for oid in hass.data[DOMAIN][entry.entry_id].get("popup_overlay_ids", {}).get(pg, []):
                         try:
-                            hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{pg}{typ}{oid}.hidden", "1"))
+                            hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{pg}o{oid}.hidden", "1"))
                         except Exception:
                             pass
         # Matrices (popup selections)
@@ -579,9 +587,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         p = int(topic_tail.split("m")[0].replace("p", ""))
                     except Exception:
                         p = 1
-                    for (typ, oid) in (("o",901),("o",902),("l",903),("m",904),("b",905)):
+                    for oid in hass.data[DOMAIN][entry.entry_id].get("popup_overlay_ids", {}).get(p, []):
                         try:
-                            hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}{typ}{oid}.hidden", "1"))
+                            hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}o{oid}.hidden", "1"))
                         except Exception:
                             pass
                 elif m["type"] == "light_color":
@@ -620,9 +628,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}b{bid}.text_color", "#FFFFFF"))
                             hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}b{bid}.val", "0"))
                     # Hide overlay
-                    for (typ, oid) in (("o",901),("o",902),("l",903),("m",904),("b",905)):
+                    for oid in hass.data[DOMAIN][entry.entry_id].get("popup_overlay_ids", {}).get(p, []):
                         try:
-                            hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}{typ}{oid}.hidden", "1"))
+                            hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}o{oid}.hidden", "1"))
                         except Exception:
                             pass
         # Title on page change and ensure any popups are hidden
@@ -635,13 +643,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 page_entry = next((e for e in all_entries if e.data.get("role") == "page" and e.data.get("panel_entry_id") == entry.entry_id and int(e.data.get("page_order", 0)) == p), None)
                 title = home_title if p == 1 else (page_entry.options.get("title", f"Page {p}") if page_entry else f"Page {p}")
                 hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p0b2.text", title))
-                # Defensive: hide any overlay remnants on all known pages
-                for pp in [1] + [int(e.data.get("page_order", 0)) for e in all_entries if e.data.get("role") == "page" and e.data.get("panel_entry_id") == entry.entry_id]:
-                    for (typ, oid) in (("o",901),("o",902),("l",903),("m",904),("b",905)):
-                        try:
-                            hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{pp}{typ}{oid}.hidden", "1"))
-                        except Exception:
-                            pass
+                # Defensive: hide any overlay remnants on this page (within page block)
+                for oid in hass.data[DOMAIN][entry.entry_id].get("popup_overlay_ids", {}).get(p, []):
+                    try:
+                        hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}o{oid}.hidden", "1"))
+                    except Exception:
+                        pass
 
     unsub_events = await mqtt.async_subscribe(hass, f"hasp/{node_name}/state/#", _state_event)
     hass.data[DOMAIN][entry.entry_id]["unsub_events"] = unsub_events

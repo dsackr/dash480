@@ -80,7 +80,8 @@ class Dash480ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         schema = vol.Schema(
             {
                 vol.Required("panel"): selector({"select": {"options": panel_options}}),
-                vol.Required("page_order", default=2): selector({"number": {"min": 2, "max": 99, "mode": "box"}}),
+                # Limit to 8 user pages: 2..9 (page 1 is Home)
+                vol.Required("page_order", default=2): selector({"number": {"min": 2, "max": 9, "mode": "box"}}),
                 vol.Optional("title", default=""): selector({"text": {}}),
             }
         )

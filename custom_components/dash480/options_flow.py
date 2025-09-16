@@ -37,7 +37,8 @@ class Dash480OptionsFlowHandler(config_entries.OptionsFlow):
         # Page options: order, title, slots
         data_schema = vol.Schema(
             {
-                vol.Required("page_order", default=self.config_entry.data.get("page_order", 2)): selector({"number": {"min": 2, "max": 99, "mode": "box"}}),
+                # Limit to 8 user pages: 2..9 (page 1 is Home)
+                vol.Required("page_order", default=self.config_entry.data.get("page_order", 2)): selector({"number": {"min": 2, "max": 9, "mode": "box"}}),
                 vol.Optional("title", default=options.get("title", "")): selector({"text": {}}),
                 vol.Optional("s1", default=options.get("s1", "")): selector({"entity": {"domain": ["switch", "light", "fan", "sensor"]}}),
                 vol.Optional("s2", default=options.get("s2", "")): selector({"entity": {"domain": ["switch", "light", "fan", "sensor"]}}),
