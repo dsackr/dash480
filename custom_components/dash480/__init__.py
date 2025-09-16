@@ -293,6 +293,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         popup_overlay_targets: dict[int, list[tuple[str,int]]] = {}
         for pe in page_entries:
             p = int(pe.data.get("page_order", 99))
+            # Clear this page explicitly to avoid stale objects from previous publishes
+            await mqtt.async_publish(hass, f"hasp/{node_name}/command/clearpage", str(p))
             title = pe.options.get("title", f"Page {p}")
             await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"id":0,"obj":"page","prev":{pprev(p)},"next":{pnext(p)}}}')
             # Page background ID within p*100..p*100+99
