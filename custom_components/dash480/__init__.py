@@ -127,8 +127,8 @@ async def async_setup(hass: HomeAssistant, config):
         for pe in page_entries:
             p = int(pe.data.get("page_order", 99))
             lines.append(f'{{"page":{p},"id":0,"obj":"page","prev":{pprev(p)},"next":{pnext(p)}}}')
-            # Match runtime layout background area for consistency
-            lines.append(f'{{"page":{p},"obj":"obj","id":800,"x":0,"y":0,"w":480,"h":480,"bg_color":"#0B1220","bg_opa":255,"click":false}}')
+            # Match runtime layout background area for consistency (use per-page block id)
+            lines.append(f'{{"page":{p},"obj":"obj","id":{p*100+80},"x":0,"y":0,"w":480,"h":480,"bg_color":"#0B1220","bg_opa":255,"click":false}}')
             for idx in range(1, 13):
                 key = f"s{idx}"
                 ent = pe.options.get(key, "")
