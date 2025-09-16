@@ -290,7 +290,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         ent_toggle_map: dict[str, list[tuple[int,int]]] = {}
         ent_matrix_map: dict[str, list[tuple[int,int,dict]]] = {}
         popup_map: dict[str, dict] = {}
-        popup_overlay_ids: dict[int, list[int]] = {}
+        popup_overlay_targets: dict[int, list[tuple[str,int]]] = {}
         for pe in page_entries:
             p = int(pe.data.get("page_order", 99))
             title = pe.options.get("title", f"Page {p}")
@@ -354,7 +354,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN][entry.entry_id]["ent_toggle_map"] = ent_toggle_map
         hass.data[DOMAIN][entry.entry_id]["ent_matrix_map"] = ent_matrix_map
         hass.data[DOMAIN][entry.entry_id]["popup_map"] = popup_map
-        hass.data[DOMAIN][entry.entry_id]["popup_overlay_ids"] = popup_overlay_ids
+        hass.data[DOMAIN][entry.entry_id]["popup_overlay_targets"] = popup_overlay_targets
         # rewire toggle/matrix listeners
         for key in list(hass.data[DOMAIN][entry.entry_id].keys()):
             if key.startswith("unsub_ent_"):
@@ -489,8 +489,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 ent = pm.get("entity")
                 kind = pm.get("type")
                 btn_id = pm.get("btn_id")
-                # Hide any existing popup overlays for this page (known IDs 901..905)
-                for (typ, oid) in (("o",901),("o",902),("l",903),("m",904),("b",905)):
+                # Hide any existing popup overlays for this page
+                for (typ, oid) in hass.data[DOMAIN][entry.entry_id].get("popup_overlay_targets", {}).get(p, []):
                     try:
                         hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}{typ}{oid}.hidden", "1"))
                     except Exception:
@@ -502,8 +502,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 title_id = base_overlay + 2
                 matrix_id = base_overlay + 3
                 close_id = base_overlay + 4
-                hass.data[DOMAIN][entry.entry_id].setdefault("popup_overlay_ids", {}).setdefault(p, []).clear()
-                hass.data[DOMAIN][entry.entry_id]["popup_overlay_ids"][p].extend([bg_id, box_id, title_id, matrix_id, close_id])
+                hass.data[DOMAIN][entry.entry_id].setdefault("popup_overlay_targets", {}).setdefault(p, []).clear()
+                hass.data[DOMAIN][entry.entry_id]["popup_overlay_targets"][p].extend([
+                    ("o", bg_id),
+                    ("o", box_id),
+                    ("l", title_id),
+                    ("m", matrix_id),
+                    ("b", close_id),
+                ])
                 # Background and container
                 hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":{bg_id},"x":0,"y":0,"w":480,"h":480,"bg_color":"#000000","bg_opa":160,"radius":0,"border_width":0}}'))
                 hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":{box_id},"x":60,"y":120,"w":360,"h":240,"bg_color":"#1E293B","bg_opa":255,"radius":16,"border_width":0}}'))
@@ -555,10 +561,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 pm2 = hass.data[DOMAIN][entry.entry_id].get("popup_map", {}).get(topic_tail)
                 if pm2 and pm2.get("type") == "close_popup":
                     pg = pm2.get("page")
-                    # Hide any known overlay ids in this page's range
-                    for oid in hass.data[DOMAIN][entry.entry_id].get("popup_overlay_ids", {}).get(pg, []):
+                    # Hide any known overlay targets in this page's range
+                    for (typ, oid) in hass.data[DOMAIN][entry.entry_id].get("popup_overlay_targets", {}).get(pg, []):
                         try:
-                            hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{pg}o{oid}.hidden", "1"))
+                            hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{pg}{typ}{oid}.hidden", "1"))
                         except Exception:
                             pass
         # Matrices (popup selections)
@@ -587,9 +593,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         p = int(topic_tail.split("m")[0].replace("p", ""))
                     except Exception:
                         p = 1
-                    for oid in hass.data[DOMAIN][entry.entry_id].get("popup_overlay_ids", {}).get(p, []):
+                    for (typ, oid) in hass.data[DOMAIN][entry.entry_id].get("popup_overlay_targets", {}).get(p, []):
                         try:
-                            hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}o{oid}.hidden", "1"))
+                            hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}{typ}{oid}.hidden", "1"))
                         except Exception:
                             pass
                 elif m["type"] == "light_color":
@@ -628,9 +634,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}b{bid}.text_color", "#FFFFFF"))
                             hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}b{bid}.val", "0"))
                     # Hide overlay
-                    for oid in hass.data[DOMAIN][entry.entry_id].get("popup_overlay_ids", {}).get(p, []):
+                    for (typ, oid) in hass.data[DOMAIN][entry.entry_id].get("popup_overlay_targets", {}).get(p, []):
                         try:
-                            hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}o{oid}.hidden", "1"))
+                            hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}{typ}{oid}.hidden", "1"))
                         except Exception:
                             pass
         # Title on page change and ensure any popups are hidden
@@ -644,9 +650,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 title = home_title if p == 1 else (page_entry.options.get("title", f"Page {p}") if page_entry else f"Page {p}")
                 hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p0b2.text", title))
                 # Defensive: hide any overlay remnants on this page (within page block)
-                for oid in hass.data[DOMAIN][entry.entry_id].get("popup_overlay_ids", {}).get(p, []):
+                for (typ, oid) in hass.data[DOMAIN][entry.entry_id].get("popup_overlay_targets", {}).get(p, []):
                     try:
-                        hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}o{oid}.hidden", "1"))
+                        hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}{typ}{oid}.hidden", "1"))
                     except Exception:
                         pass
 
