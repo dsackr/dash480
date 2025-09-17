@@ -150,8 +150,8 @@ async def async_setup(hass: HomeAssistant, config):
         for pe in page_entries:
             p = int(pe.data.get("page_order", 99))
             lines.append(f'{{"page":{p},"id":0,"obj":"page","prev":{pprev(p)},"next":{pnext(p)}}}')
-            # Match runtime layout background area for consistency (use per-page block id)
-            lines.append(f'{{"page":{p},"obj":"obj","id":{p*100+80},"x":0,"y":0,"w":480,"h":480,"bg_color":"#0B1220","bg_opa":255,"click":false}}')
+            # Match runtime layout background area; keep id within byte range per page
+            lines.append(f'{{"page":{p},"obj":"obj","id":80,"x":0,"y":0,"w":480,"h":480,"bg_color":"#0B1220","bg_opa":255,"click":false}}')
             for idx in range(1, 13):
                 key = f"s{idx}"
                 ent = pe.options.get(key, "")
@@ -162,9 +162,9 @@ async def async_setup(hass: HomeAssistant, config):
                 row = i0 // 3
                 x = 40 + col * 160
                 y = 120 + row * 140
-                # Use the same id scheme as runtime publish for readability in exports
+                # Use per-page ids within 1..255 (repeat ids across pages)
                 slot_digit = idx if idx <= 9 else 9
-                base = p * 100 + slot_digit * 10
+                base = slot_digit * 10
                 st_ent = hass.states.get(ent)
                 label = st_ent.attributes.get("friendly_name", ent) if st_ent else ent
                 lines.append(f'{{"page":{p},"obj":"obj","id":{base+1},"x":{x},"y":{y},"w":128,"h":120,"radius":14,"bg_color":"#1E293B","bg_opa":255,"click":false}}')
@@ -320,8 +320,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await mqtt.async_publish(hass, f"hasp/{node_name}/command/clearpage", str(p))
             title = pe.options.get("title", f"Page {p}")
             await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"id":0,"obj":"page","prev":{pprev(p)},"next":{pnext(p)}}}')
-            # Page background ID within p*100..p*100+99
-            await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":{p*100+80},"x":0,"y":0,"w":480,"h":480,"bg_color":"#0B1220","bg_opa":255,"click":false}}')
+            # Page background id within safe range (repeat ids across pages)
+            await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":80,"x":0,"y":0,"w":480,"h":480,"bg_color":"#0B1220","bg_opa":255,"click":false}}')
             # page title update will occur on page change via router
             # Determine layout tiles
             layout = pe.options.get("layout", "grid_3x3")
@@ -340,7 +340,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 w, h = cell_wh(rs, cs)
                 if spec.get("special") == "clock":
                     # Clock label across the tile
-                    cid = p * 100 + 70  # fixed id within page
+                    cid = 70  # fixed id within page (safe range)
                     await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"label","id":{cid},"x":{x},"y":{y+4},"w":{w},"h":{h-8},"text":"00:00","template":"%H:%M","text_font":96,"align":"center","text_color":"#E5E7EB","bg_opa":0}}')
                     continue
                 key = f"s{slot_index}"
@@ -348,9 +348,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 ent = pe.options.get(key, "")
                 if not ent:
                     continue
-                # 3-digit ID scheme within page range
+                # Per-page ids within 1..255
                 slot_digit = min(slot_index - 1, 9)
-                base3 = p * 100 + slot_digit * 10
+                base3 = slot_digit * 10
                 st_ent = hass.states.get(ent)
                 label = st_ent.attributes.get("friendly_name", ent) if st_ent else ent
                 await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":{base3+1},"x":{x},"y":{y},"w":{w},"h":{h},"radius":14,"bg_color":"#1E293B","bg_opa":255,"click":false}}')
@@ -528,8 +528,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}{typ}{oid}.hidden", "1"))
                     except Exception:
                         pass
-                # Overlay ids within the page range to avoid conflicts: use p*100+193..197
-                base_overlay = p * 100 + 193
+                # Overlay ids: use fixed ids per page to avoid >255
+                base_overlay = 193
                 bg_id = base_overlay + 0
                 box_id = base_overlay + 1
                 title_id = base_overlay + 2
