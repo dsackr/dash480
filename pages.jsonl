@@ -19,3 +19,5 @@
 // Footer status bar (no navigation)
 {"page":0,"id":20,"obj":"obj","x":0,"y":430,"w":480,"h":50,"bg_color":"#2C3E50","bg_opa":255,"radius":0,"border_width":0,"bg_grad_dir":"none","outline_width":0,"shadow_width":0}
 {"page":0,"id":21,"obj":"label","x":0,"y":430,"w":480,"h":50,"text":"Waiting on Home Assistant...","text_font":35,"align":"center","text_color":"#FFFFFF","bg_opa":0}
+
+// font based icons can be found here: https://www.openhasp.com/0.7.0/design/fonts/?h=e141#icons
