@@ -2,7 +2,5 @@
   "name": "Dash480",
   "render_readme": true,
   "country": ["US"],
-  "homeassistant": "2023.8.0",
-  "domains": ["dash480"],
-  "iot_class": "Local Push"
+  "homeassistant": "2023.8.0"
 }
