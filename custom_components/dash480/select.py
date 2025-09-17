@@ -14,6 +14,11 @@ from .const import DOMAIN
 
 ALLOWED_DOMAINS = {"switch", "light", "fan", "sensor"}
 
+LAYOUT_OPTIONS = {
+    "grid_3x3": "Grid 3×3",
+    "clock_top": "Clock Top + 2 rows",
+}
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -24,6 +29,7 @@ async def async_setup_entry(
     entities: List[SelectEntity] = []
     if role == "page":
         p = int(config_entry.data.get("page_order", 2))
+        entities.append(Dash480PageLayoutSelect(hass, config_entry, p))
         entities.append(Dash480AddEntitySelect(hass, config_entry, p))
         entities.append(Dash480RemoveSlotSelect(hass, config_entry, p))
     async_add_entities(entities)
@@ -215,6 +221,67 @@ class Dash480RemoveSlotSelect(SelectEntity):
             sel = updated.options.get("pending_remove_slot")
             if sel is None:
                 self._current_label = None
+            self.async_write_ha_state()
+        self._unsub_update = self._entry.add_update_listener(_on_update)
+
+    async def async_will_remove_from_hass(self) -> None:
+        if self._unsub_update:
+            try:
+                self._unsub_update()
+            except Exception:
+                pass
+            self._unsub_update = None
+
+
+class Dash480PageLayoutSelect(SelectEntity):
+    """Select a layout template for this page."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, page: int) -> None:
+        self.hass = hass
+        self._entry = entry
+        self._page = page
+        self._device_identifier = f"dash480_page_{entry.entry_id}"
+        self._device_name = f"Dash480 Page {page}"
+        self._attr_name = f"P{page} Layout"
+        self._attr_icon = "mdi:view-grid"
+        self._attr_unique_id = f"{self._device_identifier}_layout"
+        self._unsub_update = None
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._device_identifier)},
+            name=self._device_name,
+            manufacturer="openHASP",
+            model="ESP32-S3 480x480",
+        )
+
+    @property
+    def options(self) -> list[str]:
+        return list(LAYOUT_OPTIONS.values())
+
+    @property
+    def current_option(self) -> str | None:
+        key = self._entry.options.get("layout", "grid_3x3")
+        return LAYOUT_OPTIONS.get(key)
+
+    async def async_select_option(self, option: str) -> None:
+        # Map back from label to key
+        key = next((k for k, v in LAYOUT_OPTIONS.items() if v == option), None)
+        if not key:
+            return
+        opts = {**self._entry.options, "layout": key}
+        self.hass.config_entries.async_update_entry(self._entry, options=opts)
+        # Republish this page
+        panel_id = self._entry.data.get("panel_entry_id")
+        if panel_id:
+            await self.hass.services.async_call(DOMAIN, "publish_all", {"entry_id": panel_id}, blocking=False)
+        self.async_write_ha_state()
+
+    async def async_added_to_hass(self) -> None:
+        async def _on_update(hass: HomeAssistant, updated: ConfigEntry):
             self.async_write_ha_state()
         self._unsub_update = self._entry.add_update_listener(_on_update)
 
