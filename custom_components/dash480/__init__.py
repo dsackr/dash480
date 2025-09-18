@@ -160,15 +160,18 @@ async def async_setup(hass: HomeAssistant, config):
                 i0 = idx - 1
                 col = i0 % 3
                 row = i0 // 3
-                x = 40 + col * 160
-                y = 120 + row * 140
+                # Export geometry matches runtime
+                base_x = 24; col_step = 128 + 24
+                base_y = 120; row_step = 120 + 20
+                x = base_x + col * col_step
+                y = base_y + row * row_step
                 # Use per-page ids within 1..255 (repeat ids across pages)
                 slot_digit = idx if idx <= 9 else 9
                 base = slot_digit * 10
                 st_ent = hass.states.get(ent)
                 label = st_ent.attributes.get("friendly_name", ent) if st_ent else ent
                 lines.append(f'{{"page":{p},"obj":"obj","id":{base+1},"x":{x},"y":{y},"w":128,"h":120,"radius":14,"bg_color":"#1E293B","bg_opa":255,"click":false}}')
-                lines.append(f'{{"page":{p},"obj":"label","id":{base},"x":{x+8},"y":{y+8},"w":112,"h":22,"text":"{label}","text_font":18,"text_color":"#9CA3AF","bg_opa":0}}')
+                lines.append(f'{{"page":{p},"obj":"label","id":{base},"x":{x+8},"y":{y+8},"w":{128-16},"h":22,"text":"{label}","text_font":18,"text_color":"#9CA3AF","bg_opa":0}}')
                 domain = ent.split(".")[0]
                 if domain in ("switch", "light", "fan"):
                     icon = "\\uE4DC" if domain == "fan" else "\\uE425"
@@ -326,11 +329,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # Determine layout tiles
             layout = pe.options.get("layout", "grid_3x3")
             tiles = _tile_specs_for_layout(layout)
-            # Geometry bases
+            # Geometry bases (480x480)
+            # Columns: width 128, spacing 24, side margins 24 -> 3*(128) + 2*(24) + 2*(24) = 480
+            # Rows: height 120, spacing 20; header/footer occupy page 0
             def cell_xy(rc: int, cc: int) -> tuple[int, int]:
-                return (40 + cc * 160, 120 + rc * 140)
+                base_x = 24
+                col_step = 128 + 24
+                base_y = 120
+                row_step = 120 + 20
+                return (base_x + cc * col_step, base_y + rc * row_step)
             def cell_wh(rs: int, cs: int) -> tuple[int, int]:
-                return (128 + (cs - 1) * 160, 120 + (rs - 1) * 140)
+                w = 128 * cs + 24 * (cs - 1)
+                h = 120 * rs + 20 * (rs - 1)
+                return (w, h)
             # Assign entities to non-special tiles in order s1..s9
             slot_index = 1
             for spec in tiles:
