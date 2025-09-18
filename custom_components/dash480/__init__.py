@@ -559,14 +559,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 close_id = base_overlay + 4
                 hass.data[DOMAIN][entry.entry_id].setdefault("popup_overlay_targets", {}).setdefault(p, []).clear()
                 hass.data[DOMAIN][entry.entry_id]["popup_overlay_targets"][p].extend([
-                    ("o", bg_id),
+                    ("b", bg_id),
                     ("o", box_id),
                     ("l", title_id),
                     ("m", matrix_id),
                     ("b", close_id),
                 ])
                 # Background and container (bg is clickable to close)
-                hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":{bg_id},"x":0,"y":0,"w":480,"h":480,"bg_color":"#000000","bg_opa":160,"radius":0,"border_width":0,"click":true}}'))
+                hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btn","id":{bg_id},"x":0,"y":0,"w":480,"h":480,"text":"","toggle":false,"bg_color":"#000000","bg_opa":160,"radius":0,"border_width":0}}'))
                 hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":{box_id},"x":60,"y":120,"w":360,"h":240,"bg_color":"#1E293B","bg_opa":255,"radius":16,"border_width":0}}'))
                 # Title
                 title = "Fan Speed" if kind == "fan_select" else "Light Color"
