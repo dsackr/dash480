@@ -376,7 +376,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         m = ",".join(modes).lower(); has_color = ("hs" in m) or ("rgb" in m) or ("rgbw" in m) or ("rgbww" in m)
                     except Exception:
                         has_color = False
-                    icon = "\\uE425" if not is_fan else "\\uE4DC"
+                    # Use power icon for all; fan glyph varies by fonts
+                    icon = "\\uE425"
                     route_to_popup = (is_fan or (is_light and has_color))
                     bx = x + max(20, (w - 88)//2)
                     by = y + max(40, (h - 64)//2)
@@ -613,6 +614,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{pg}{typ}{oid}.hidden", "1"))
                         except Exception:
                             pass
+                    # Short cooldown to avoid accidental reopen
+                    try:
+                        import time as _t
+                        hass.data[DOMAIN][entry.entry_id]["popup_cooldown_until"] = _t.monotonic() + 0.35
+                    except Exception:
+                        pass
+                    return
                     # Start a short cooldown to avoid unintended popup re-open
                     try:
                         hass.data[DOMAIN][entry.entry_id]["popup_cooldown_until"] = time.monotonic() + 0.35
