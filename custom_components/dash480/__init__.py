@@ -543,8 +543,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     ("m", matrix_id),
                     ("b", close_id),
                 ])
-                # Background and container
-                hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":{bg_id},"x":0,"y":0,"w":480,"h":480,"bg_color":"#000000","bg_opa":160,"radius":0,"border_width":0}}'))
+                # Background and container (bg is clickable to close)
+                hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":{bg_id},"x":0,"y":0,"w":480,"h":480,"bg_color":"#000000","bg_opa":160,"radius":0,"border_width":0,"click":true}}'))
                 hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":{box_id},"x":60,"y":120,"w":360,"h":240,"bg_color":"#1E293B","bg_opa":255,"radius":16,"border_width":0}}'))
                 # Title
                 title = "Fan Speed" if kind == "fan_select" else "Light Color"
@@ -563,6 +563,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btn","id":{close_id},"x":316,"y":312,"w":92,"h":36,"text":"Close","text_font":18,"radius":10,"bg_color":"#374151","text_color":"#FFFFFF","border_width":0}}'))
                 # Map close button
                 hass.data[DOMAIN][entry.entry_id].setdefault("popup_map", {})[f"p{p}b{close_id}"] = {"type": "close_popup", "page": p}
+                # Map background click to close
+                hass.data[DOMAIN][entry.entry_id]["popup_map"][f"p{p}o{bg_id}"] = {"type": "close_popup", "page": p}
                 return
             # Home relays (page 1 IDs moved into 100..199 range)
             if topic_tail == "p1b112":
@@ -600,6 +602,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{pg}{typ}{oid}.hidden", "1"))
                         except Exception:
                             pass
+                    # Start a short cooldown to avoid unintended popup re-open
+                    try:
+                        hass.data[DOMAIN][entry.entry_id]["popup_cooldown_until"] = time.monotonic() + 0.35
+                    except Exception:
+                        pass
         # Matrices (popup selections)
         if topic_tail.startswith("p") and ("m" in topic_tail) and (event in ("up", "changed")):
             m = hass.data[DOMAIN][entry.entry_id].get("matrix_map", {}).get(topic_tail)
