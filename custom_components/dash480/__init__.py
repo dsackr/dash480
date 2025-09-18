@@ -585,8 +585,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btn","id":{close_id},"x":316,"y":312,"w":92,"h":36,"text":"Close","text_font":18,"radius":10,"bg_color":"#374151","text_color":"#FFFFFF","border_width":0}}'))
                 # Map close button
                 hass.data[DOMAIN][entry.entry_id].setdefault("popup_map", {})[f"p{p}b{close_id}"] = {"type": "close_popup", "page": p}
-                # Map background click to close
-                hass.data[DOMAIN][entry.entry_id]["popup_map"][f"p{p}o{bg_id}"] = {"type": "close_popup", "page": p}
+                # Map background click to close (background is a button)
+                hass.data[DOMAIN][entry.entry_id]["popup_map"][f"p{p}b{bg_id}"] = {"type": "close_popup", "page": p}
                 return
             # Home relays (page 1 IDs moved into 100..199 range)
             if topic_tail == "p1b112":
