@@ -488,9 +488,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Define the callback for when the device comes online
     @callback
     def push_layout(msg):
-        """Handle device online message and push layout."""
+        """Handle device online message and push full layout.
+        We publish all pages on LWT=online so navigation and pages are
+        consistent immediately after boot (no blank extra pages).
+        """
         if msg.payload == "online":
-            hass.async_create_task(_push_home_layout())
+            hass.async_create_task(_publish_all())
 
     # Subscribe to device LWT (online/offline)
     unsubscribe_handle = await mqtt.async_subscribe(
