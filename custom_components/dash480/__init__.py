@@ -530,6 +530,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # Popup triggers (fan speed / light color)
             pm = hass.data[DOMAIN][entry.entry_id].get("popup_map", {}).get(topic_tail)
             if pm:
+                # Guard against immediate reopen after a close
+                try:
+                    import time as _t
+                    if _t.monotonic() < hass.data[DOMAIN][entry.entry_id].get("popup_cooldown_until", 0.0):
+                        return
+                except Exception:
+                    pass
                 try:
                     p = int(topic_tail.split("b")[0].replace("p", ""))
                 except Exception:
