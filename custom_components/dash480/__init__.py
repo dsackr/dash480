@@ -275,6 +275,81 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         for line in lines:
             await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", line)
 
+    async def _publish_page_num(p: int) -> None:
+        # Compute prev/next based on current configured pages
+        all_entries = hass.config_entries.async_entries(DOMAIN)
+        page_entries = [e for e in all_entries if e.data.get("role") == "page" and e.data.get("panel_entry_id") == entry.entry_id]
+        page_entries.sort(key=lambda e: int(e.data.get("page_order", 99)))
+        nums = [int(e.data.get("page_order", 99)) for e in page_entries]
+        ring = [1] + nums
+        def pprev(pp):
+            i = ring.index(pp); return ring[(i-1) % len(ring)]
+        def pnext(pp):
+            i = ring.index(pp); return ring[(i+1) % len(ring)]
+        # Find page entry
+        pe = next((e for e in page_entries if int(e.data.get("page_order", 99)) == p), None)
+        if not pe:
+            return
+        # Clear page and draw base
+        await mqtt.async_publish(hass, f"hasp/{node_name}/command/clearpage", str(p))
+        await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"id":0,"obj":"page","prev":{pprev(p)},"next":{pnext(p)}}}')
+        await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":80,"x":0,"y":0,"w":480,"h":480,"bg_color":"#0B1220","bg_opa":255,"click":false}}')
+        # Prebuild hidden modal
+        for line in [
+            f'{{"page":{p},"obj":"btn","id":193,"x":0,"y":0,"w":480,"h":480,"text":"","toggle":false,"bg_color":"#000000","bg_opa":160,"radius":0,"border_width":0,"hidden":1}}',
+            f'{{"page":{p},"obj":"obj","id":194,"x":60,"y":120,"w":360,"h":240,"bg_color":"#1E293B","bg_opa":255,"radius":16,"border_width":0,"hidden":1}}',
+            f'{{"page":{p},"obj":"label","id":195,"x":60,"y":132,"w":360,"h":32,"text":"","text_font":26,"align":"center","text_color":"#E5E7EB","bg_opa":0,"hidden":1}}',
+            f'{{"page":{p},"obj":"btnmatrix","id":196,"x":92,"y":176,"w":296,"h":96,"text_font":20,"options":["Off"],"toggle":1,"one_check":1,"val":0,"radius":10,"hidden":1}}',
+            f'{{"page":{p},"obj":"btn","id":197,"x":316,"y":312,"w":92,"h":36,"text":"Close","text_font":18,"radius":10,"bg_color":"#374151","text_color":"#FFFFFF","border_width":0,"hidden":1}}',
+        ]:
+            await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", line)
+        hass.data[DOMAIN][entry.entry_id].setdefault("popup_overlay_targets", {})[p] = [("b",193),("o",194),("l",195),("m",196),("b",197)]
+        hass.data[DOMAIN][entry.entry_id].setdefault("popup_map", {})[f"p{p}b193"] = {"type": "close_popup", "page": p}
+        hass.data[DOMAIN][entry.entry_id][f"p{p}b197"] = {"type": "close_popup", "page": p}
+        # Draw tiles (reuse logic in _publish_all path)
+        # Geometry
+        def cell_xy(rc: int, cc: int) -> tuple[int, int]:
+            base_x = 24; col_step = 128 + 24
+            base_y = 120; row_step = 120 + 20
+            return (base_x + cc * col_step, base_y + rc * row_step)
+        def cell_wh(rs: int, cs: int) -> tuple[int, int]:
+            w = 128 * cs + 24 * (cs - 1); h = 120 * rs + 20 * (rs - 1); return (w, h)
+        layout = pe.options.get("layout", "grid_3x3"); tiles = _tile_specs_for_layout(layout)
+        slot_index = 1
+        for spec in tiles:
+            rs=int(spec.get("rs",1)); cs=int(spec.get("cs",1)); row=int(spec.get("row",0)); col=int(spec.get("col",0))
+            x,y = cell_xy(row,col); w,h = cell_wh(rs,cs)
+            if spec.get("special") == "clock":
+                await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"label","id":70,"x":{x},"y":{y+4},"w":{w},"h":{h-8},"text":"00:00","template":"%H:%M","text_font":96,"align":"center","text_color":"#E5E7EB","bg_opa":0}}')
+                continue
+            key = f"s{slot_index}"; slot_index += 1
+            ent = pe.options.get(key, "");
+            if not ent: continue
+            slot_digit = min(slot_index-1,9); base3 = slot_digit*10
+            st_ent = hass.states.get(ent); label = st_ent.attributes.get("friendly_name", ent) if st_ent else ent
+            await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":{base3+1},"x":{x},"y":{y},"w":{w},"h":{h},"radius":14,"bg_color":"#1E293B","bg_opa":255,"click":false}}')
+            await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"label","id":{base3},"x":{x+8},"y":{y+8},"w":{max(112,w-16)},"h":22,"text":"{label}","text_font":18,"text_color":"#9CA3AF","bg_opa":0}}')
+            bx = x + max(20,(w-88)//2); by = y + max(40,(h-64)//2)
+            domain = ent.split(".")[0]
+            if domain in ("switch","light","fan"):
+                icon = "\\uE425"
+                await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btn","id":{base3+2},"x":{bx},"y":{by},"w":88,"h":64,"text":"{icon}","text_font":64,"toggle":1,"radius":12,"bg_color":"#1E293B","bg_opa":255,"text_color":"#FFFFFF","border_width":0}}')
+                ent_toggle_map.setdefault(ent, []).append((p, base3+2))
+                is_light = domain=="light"; is_fan = domain=="fan"
+                modes = st_ent.attributes.get("supported_color_modes", []) if st_ent else []
+                has_color=False
+                try:
+                    m=",".join(modes).lower(); has_color=("hs" in m) or ("rgb" in m) or ("rgbw" in m) or ("rgbww" in m)
+                except Exception: pass
+                if is_fan or (is_light and has_color):
+                    hass.data[DOMAIN][entry.entry_id].setdefault("popup_map", {})[f"p{p}b{base3+2}"] = {"type": ("fan_select" if is_fan else "light_color"), "entity": ent, "page": p, "btn_id": base3+2}
+                else:
+                    ctrl_map[f"p{p}b{base3+2}"] = ent
+            else:
+                val = st_ent.state if st_ent and st_ent.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, "") else "--"
+                await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btn","id":{base3+2},"x":{bx},"y":{by},"w":88,"h":64,"text":"{val}","text_font":20,"toggle":false,"bg_opa":0,"border_width":0,"radius":0}}')
+                sensor_map.setdefault(ent, []).append((p, base3+2))
+
     async def _publish_all() -> None:
         """Publish full layout based on config entities (pages, titles, slots)."""
         _LOGGER.info("Dash480: publishing all for node=%s", node_name)
@@ -319,80 +394,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         popup_overlay_targets: dict[int, list[tuple[str,int]]] = {}
         for pe in page_entries:
             p = int(pe.data.get("page_order", 99))
-            # Clear this page explicitly to avoid stale objects from previous publishes
-            await mqtt.async_publish(hass, f"hasp/{node_name}/command/clearpage", str(p))
-            title = pe.options.get("title", f"Page {p}")
-            await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"id":0,"obj":"page","prev":{pprev(p)},"next":{pnext(p)}}}')
-            # Page background id within safe range (repeat ids across pages)
-            await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":80,"x":0,"y":0,"w":480,"h":480,"bg_color":"#0B1220","bg_opa":255,"click":false}}')
-            # page title update will occur on page change via router
-            # Determine layout tiles
-            layout = pe.options.get("layout", "grid_3x3")
-            tiles = _tile_specs_for_layout(layout)
-            # Geometry bases (480x480)
-            # Columns: width 128, spacing 24, side margins 24 -> 3*(128) + 2*(24) + 2*(24) = 480
-            # Rows: height 120, spacing 20; header/footer occupy page 0
-            def cell_xy(rc: int, cc: int) -> tuple[int, int]:
-                base_x = 24
-                col_step = 128 + 24
-                base_y = 120
-                row_step = 120 + 20
-                return (base_x + cc * col_step, base_y + rc * row_step)
-            def cell_wh(rs: int, cs: int) -> tuple[int, int]:
-                w = 128 * cs + 24 * (cs - 1)
-                h = 120 * rs + 20 * (rs - 1)
-                return (w, h)
-            # Assign entities to non-special tiles in order s1..s9
-            slot_index = 1
-            for spec in tiles:
-                rs = int(spec.get("rs", 1)); cs = int(spec.get("cs", 1))
-                row = int(spec.get("row", 0)); col = int(spec.get("col", 0))
-                x, y = cell_xy(row, col)
-                w, h = cell_wh(rs, cs)
-                if spec.get("special") == "clock":
-                    # Clock label across the tile
-                    cid = 70  # fixed id within page (safe range)
-                    await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"label","id":{cid},"x":{x},"y":{y+4},"w":{w},"h":{h-8},"text":"00:00","template":"%H:%M","text_font":96,"align":"center","text_color":"#E5E7EB","bg_opa":0}}')
-                    continue
-                key = f"s{slot_index}"
-                slot_index += 1
-                ent = pe.options.get(key, "")
-                if not ent:
-                    continue
-                # Per-page ids within 1..255
-                slot_digit = min(slot_index - 1, 9)
-                base3 = slot_digit * 10
-                st_ent = hass.states.get(ent)
-                label = st_ent.attributes.get("friendly_name", ent) if st_ent else ent
-                await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":{base3+1},"x":{x},"y":{y},"w":{w},"h":{h},"radius":14,"bg_color":"#1E293B","bg_opa":255,"click":false}}')
-                await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"label","id":{base3},"x":{x+8},"y":{y+8},"w":{max(112,w-16)},"h":22,"text":"{label}","text_font":18,"text_color":"#9CA3AF","bg_opa":0}}')
-                domain = ent.split(".")[0]
-                if domain in ("switch", "light", "fan"):
-                    is_light = domain == "light"
-                    is_fan = domain == "fan"
-                    modes = st_ent.attributes.get("supported_color_modes", []) if st_ent else []
-                    has_color = False
-                    try:
-                        m = ",".join(modes).lower(); has_color = ("hs" in m) or ("rgb" in m) or ("rgbw" in m) or ("rgbww" in m)
-                    except Exception:
-                        has_color = False
-                    # Use power icon for all; fan glyph varies by fonts
-                    icon = "\\uE425"
-                    route_to_popup = (is_fan or (is_light and has_color))
-                    bx = x + max(20, (w - 88)//2)
-                    by = y + max(40, (h - 64)//2)
-                    await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btn","id":{base3+2},"x":{bx},"y":{by},"w":88,"h":64,"text":"{icon}","text_font":64,"toggle":1,"radius":12,"bg_color":"#1E293B","bg_opa":255,"text_color":"#FFFFFF","border_width":0}}')
-                    ent_toggle_map.setdefault(ent, []).append((p, base3+2))
-                    if route_to_popup:
-                        popup_map[f"p{p}b{base3+2}"] = {"type": ("fan_select" if is_fan else "light_color"), "entity": ent, "page": p, "btn_id": base3+2}
-                    else:
-                        ctrl_map[f"p{p}b{base3+2}"] = ent
-                elif domain == "sensor":
-                    val = st_ent.state if st_ent and st_ent.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, "") else "--"
-                    bx = x + max(20, (w - 88)//2)
-                    by = y + max(40, (h - 64)//2)
-                    await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btn","id":{base3+2},"x":{bx},"y":{by},"w":88,"h":64,"text":"{val}","text_font":20,"toggle":false,"bg_opa":0,"border_width":0,"radius":0}}')
-                    sensor_map.setdefault(ent, []).append((p, base3+2))
+            await _publish_page_num(p)
         hass.data[DOMAIN][entry.entry_id]["ctrl_map"] = ctrl_map
         hass.data[DOMAIN][entry.entry_id]["sensor_map"] = sensor_map
         hass.data[DOMAIN][entry.entry_id]["matrix_map"] = matrix_map
@@ -632,28 +634,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     ("m", matrix_id),
                     ("b", close_id),
                 ])
-                # Background and container (bg is clickable to close)
-                hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btn","id":{bg_id},"x":0,"y":0,"w":480,"h":480,"text":"","toggle":false,"bg_color":"#000000","bg_opa":160,"radius":0,"border_width":0}}'))
-                hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":{box_id},"x":60,"y":120,"w":360,"h":240,"bg_color":"#1E293B","bg_opa":255,"radius":16,"border_width":0}}'))
-                # Title
+                # Prebuilt overlay: update title/options, then unhide elements
                 title = "Fan Speed" if kind == "fan_select" else "Light Color"
-                hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"label","id":{title_id},"x":60,"y":132,"w":360,"h":32,"text":"{title}","text_font":26,"align":"center","text_color":"#E5E7EB","bg_opa":0}}'))
-                # Options matrix
+                await mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}l{title_id}.text", title)
                 if kind == "fan_select":
-                    opts = "\"Off\",\"Low\",\"Med\",\"High\""
+                    # Update matrix options
+                    await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btnmatrix","id":{matrix_id},"options":["Off","Low","Med","High"],"val":0}}')
                     meta = {"type": "fan_select", "entity": ent}
                 else:
-                    opts = "\"Off\",\"Red\",\"Green\",\"Blue\",\"Warm\",\"Cool\""
+                    await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btnmatrix","id":{matrix_id},"options":["Off","Red","Green","Blue","Warm","Cool"],"val":0}}')
                     meta = {"type": "light_color", "entity": ent, "btn_id": btn_id}
-                hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btnmatrix","id":{matrix_id},"x":92,"y":176,"w":296,"h":96,"text_font":20,"options":[{opts}],"toggle":1,"one_check":1,"val":0,"radius":10}}'))
-                # Register temporary matrix mapping
                 hass.data[DOMAIN][entry.entry_id].setdefault("matrix_map", {})[f"p{p}m{matrix_id}"] = meta
-                # Close button
-                hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btn","id":{close_id},"x":316,"y":312,"w":92,"h":36,"text":"Close","text_font":18,"radius":10,"bg_color":"#374151","text_color":"#FFFFFF","border_width":0}}'))
-                # Map close button
-                hass.data[DOMAIN][entry.entry_id].setdefault("popup_map", {})[f"p{p}b{close_id}"] = {"type": "close_popup", "page": p}
-                # Map background click to close (background is a button)
-                hass.data[DOMAIN][entry.entry_id]["popup_map"][f"p{p}b{bg_id}"] = {"type": "close_popup", "page": p}
+                # Unhide all overlay parts
+                for (typ, oid) in hass.data[DOMAIN][entry.entry_id].get("popup_overlay_targets", {}).get(p, [("b",193),("o",194),("l",195),("m",196),("b",197)]):
+                    await mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}{typ}{oid}.hidden", "0")
                 return
             # Home relays (page 1 IDs moved into 100..199 range)
             if topic_tail == "p1b112":
@@ -780,6 +774,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             page = str(msg.payload)
             if page.isdigit():
                 p = int(page)
+                # Track current page
+                hass.data[DOMAIN][entry.entry_id]["current_page"] = p
                 # Resolve title from Page entries map
                 all_entries = hass.config_entries.async_entries(DOMAIN)
                 page_entry = next((e for e in all_entries if e.data.get("role") == "page" and e.data.get("panel_entry_id") == entry.entry_id and int(e.data.get("page_order", 0)) == p), None)
@@ -791,6 +787,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}{typ}{oid}.hidden", "1"))
                     except Exception:
                         pass
+        # Long-press on header title rebuilds current page
+        if topic_tail == "p0b2" and event == "long":
+            cp = hass.data[DOMAIN][entry.entry_id].get("current_page")
+            if isinstance(cp, int) and cp >= 2:
+                hass.async_create_task(_publish_page_num(cp))
 
     unsub_events = await mqtt.async_subscribe(hass, f"hasp/{node_name}/state/#", _state_event)
     hass.data[DOMAIN][entry.entry_id]["unsub_events"] = unsub_events
