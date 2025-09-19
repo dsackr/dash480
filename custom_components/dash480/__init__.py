@@ -549,6 +549,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{pnum}{typ}{ooid}.hidden", "1"))
                         except Exception:
                             pass
+                    # Clear overlay bookkeeping
+                    try:
+                        hass.data[DOMAIN][entry.entry_id]["popup_overlay_targets"][pnum] = []
+                        hass.data[DOMAIN][entry.entry_id].get("matrix_map", {}).pop(f"p{pnum}m196", None)
+                    except Exception:
+                        pass
                     try:
                         import time as _t
                         hass.data[DOMAIN][entry.entry_id]["popup_cooldown_until"] = _t.monotonic() + 0.35
@@ -566,6 +572,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{pg}{typ}{oid}.hidden", "1"))
                         except Exception:
                             pass
+                    # Clear overlay bookkeeping
+                    try:
+                        hass.data[DOMAIN][entry.entry_id]["popup_overlay_targets"][pg] = []
+                        hass.data[DOMAIN][entry.entry_id].get("matrix_map", {}).pop(f"p{pg}m196", None)
+                    except Exception:
+                        pass
                     # Cooldown to prevent re-open
                     try:
                         import time as _t
