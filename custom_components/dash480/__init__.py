@@ -527,6 +527,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             val = -1
         # Relay button routing on 'up'
         if event == "up":
+            # Global cooldown guard to ignore any touch for a brief period after closing a popup
+            try:
+                import time as _t
+                if _t.monotonic() < hass.data[DOMAIN][entry.entry_id].get("popup_cooldown_until", 0.0):
+                    return
+            except Exception:
+                pass
             # If an overlay is visible on this page, consume any non-overlay tap to close it
             pnum = None; tchar = None; oid = None
             if topic_tail.startswith("p"):
