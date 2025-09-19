@@ -306,7 +306,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Geometry
         def cell_xy(rc: int, cc: int) -> tuple[int, int]:
             base_x = 24; col_step = 128 + 24
-            base_y = 120; row_step = 120 + 20
+            # Move grid up slightly
+            base_y = 100; row_step = 120 + 20
             return (base_x + cc * col_step, base_y + rc * row_step)
         def cell_wh(rs: int, cs: int) -> tuple[int, int]:
             w = 128 * cs + 24 * (cs - 1); h = 120 * rs + 20 * (rs - 1); return (w, h)
@@ -325,7 +326,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             st_ent = hass.states.get(ent); label = st_ent.attributes.get("friendly_name", ent) if st_ent else ent
             await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":{base3+1},"x":{x},"y":{y},"w":{w},"h":{h},"radius":14,"bg_color":"#1E293B","bg_opa":255,"click":false}}')
             await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"label","id":{base3},"x":{x+8},"y":{y+8},"w":{max(112,w-16)},"h":22,"text":"{label}","text_font":18,"text_color":"#9CA3AF","bg_opa":0}}')
-            bx = x + max(20,(w-88)//2); by = y + max(40,(h-64)//2)
+            # Place icon higher to leave room for inline controls
+            bx = x + max(20,(w-88)//2); by = y + 24
             domain = ent.split(".")[0]
             if domain in ("switch","light","fan"):
                 # Icon selection by slot option, default per domain
@@ -346,14 +348,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 if is_fan:
                     # Inline fan speed matrix
                     mid = base3 + 3
-                    mx = x + 8; my = y + h - 44; mw = w - 16
-                    await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btnmatrix","id":{mid},"x":{mx},"y":{my},"w":{mw},"h":36,"text_font":18,"options":["Off","Low","Med","High"],"toggle":1,"one_check":1,"val":0,"radius":8}}')
+                    mx = x + 8; mw = w - 16
+                    mh = 28; my = y + h - mh - 8
+                    await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btnmatrix","id":{mid},"x":{mx},"y":{my},"w":{mw},"h":{mh},"text_font":18,"options":["Off","Low","Med","High"],"toggle":1,"one_check":1,"val":0,"radius":8}}')
                     mi = {"type": "fan_select", "entity": ent}
                     matrix_map[f"p{p}m{mid}"] = mi
                     ent_matrix_map.setdefault(ent, []).append((p, mid, mi))
                 elif is_light and has_color:
                     # Inline color chips
-                    chip=28; csp=8; cx = x + w - chip - 8; cy = y + 28
+                    chip=18; csp=6; cx = x + w - chip - 6
+                    total_h = chip*5 + csp*4
+                    cy = y + max(6, (h - total_h)//2)
                     color_defs = [
                         ("#FF0000", {"rgb_color":[255,0,0]}),
                         ("#00FF00", {"rgb_color":[0,255,0]}),
@@ -367,8 +372,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btn","id":{bid},"x":{cx},"y":{cy},"w":{chip},"h":{chip},"radius":6,"bg_color":"{hexcol}","bg_grad_dir":"none","border_width":0}}')
                         cmap[f"p{p}b{bid}"] = {"entity": ent, "payload": payload, "main_btn": base3+2}
                         cy += chip + csp; bid += 1
-                else:
-                    ctrl_map[f"p{p}b{base3+2}"] = ent
+                # Always map main button on/off
+                ctrl_map[f"p{p}b{base3+2}"] = ent
             else:
                 val = st_ent.state if st_ent and st_ent.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, "") else "--"
                 await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btn","id":{base3+2},"x":{bx},"y":{by},"w":88,"h":64,"text":"{val}","text_font":20,"toggle":false,"bg_opa":0,"border_width":0,"radius":0}}')
@@ -809,6 +814,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}{typ}{oid}.hidden", "1"))
                         except Exception:
                             pass
+                elif m["type"] == "cover_cmd":
+                    idx = int(val)
+                    svc = "open_cover" if idx == 0 else "stop_cover" if idx == 1 else "close_cover"
+                    hass.async_create_task(hass.services.async_call("cover", svc, {"entity_id": ent}))
         # Title on page change and ensure any popups are hidden
         if topic_tail == "page":
             page = str(msg.payload)
