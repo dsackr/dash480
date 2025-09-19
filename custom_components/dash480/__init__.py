@@ -527,6 +527,34 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             val = -1
         # Relay button routing on 'up'
         if event == "up":
+            # If an overlay is visible on this page, consume any non-overlay tap to close it
+            pnum = None; tchar = None; oid = None
+            if topic_tail.startswith("p"):
+                s = topic_tail[1:]
+                i = 0
+                while i < len(s) and s[i].isdigit():
+                    i += 1
+                if i > 0 and i < len(s):
+                    try:
+                        pnum = int(s[:i])
+                        tchar = s[i]
+                        oid = int(s[i+1:]) if s[i+1:].isdigit() else None
+                    except Exception:
+                        pnum = None
+            if isinstance(pnum, int):
+                targets = hass.data[DOMAIN][entry.entry_id].get("popup_overlay_targets", {}).get(pnum, [])
+                if targets and (tchar, oid) not in targets:
+                    for (typ, ooid) in list(targets):
+                        try:
+                            hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{pnum}{typ}{ooid}.hidden", "1"))
+                        except Exception:
+                            pass
+                    try:
+                        import time as _t
+                        hass.data[DOMAIN][entry.entry_id]["popup_cooldown_until"] = _t.monotonic() + 0.35
+                    except Exception:
+                        pass
+                    return
             # Popup triggers (fan speed / light color)
             pm = hass.data[DOMAIN][entry.entry_id].get("popup_map", {}).get(topic_tail)
             if pm:
