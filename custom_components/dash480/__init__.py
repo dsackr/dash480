@@ -555,23 +555,43 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     except Exception:
                         pass
                     return
-            # Popup triggers (fan speed / light color)
+            # Popup routing
             pm = hass.data[DOMAIN][entry.entry_id].get("popup_map", {}).get(topic_tail)
             if pm:
-                # Guard against immediate reopen after a close
-                try:
-                    import time as _t
-                    if _t.monotonic() < hass.data[DOMAIN][entry.entry_id].get("popup_cooldown_until", 0.0):
-                        return
-                except Exception:
+                # Close actions first
+                if pm.get("type") == "close_popup":
+                    pg = pm.get("page")
+                    for (typ, oid) in hass.data[DOMAIN][entry.entry_id].get("popup_overlay_targets", {}).get(pg, []):
+                        try:
+                            hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{pg}{typ}{oid}.hidden", "1"))
+                        except Exception:
+                            pass
+                    # Cooldown to prevent re-open
+                    try:
+                        import time as _t
+                        hass.data[DOMAIN][entry.entry_id]["popup_cooldown_until"] = _t.monotonic() + 0.35
+                    except Exception:
+                        pass
+                    return
+                # Open actions (fan speed or light color)
+                if pm.get("type") not in ("fan_select", "light_color"):
+                    # Not a popup open, continue
                     pass
-                try:
-                    p = int(topic_tail.split("b")[0].replace("p", ""))
-                except Exception:
-                    p = pm.get("page") or 1
-                ent = pm.get("entity")
-                kind = pm.get("type")
-                btn_id = pm.get("btn_id")
+                else:
+                    # Guard against immediate reopen after a close
+                    try:
+                        import time as _t
+                        if _t.monotonic() < hass.data[DOMAIN][entry.entry_id].get("popup_cooldown_until", 0.0):
+                            return
+                    except Exception:
+                        pass
+                    try:
+                        p = int(topic_tail.split("b")[0].replace("p", ""))
+                    except Exception:
+                        p = pm.get("page") or 1
+                    ent = pm.get("entity")
+                    kind = pm.get("type")
+                    btn_id = pm.get("btn_id")
                 # Hide any existing popup overlays for this page
                 for (typ, oid) in hass.data[DOMAIN][entry.entry_id].get("popup_overlay_targets", {}).get(p, []):
                     try:
