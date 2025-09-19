@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from homeassistant.components.button import ButtonEntity
+from homeassistant.components import mqtt
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
@@ -21,6 +22,8 @@ async def async_setup_entry(
             [
                 Dash480PublishAllButton(hass, config_entry),
                 Dash480PublishHomeButton(hass, config_entry),
+                Dash480ShowGridOverlayButton(hass, config_entry),
+                Dash480HideGridOverlayButton(hass, config_entry),
             ]
         )
     else:
@@ -111,6 +114,68 @@ class Dash480PublishPageButton(_BaseDashButton):
                 "publish_all",
                 {"entry_id": panel_id},
                 blocking=True,
+            )
+
+
+class Dash480ShowGridOverlayButton(_BaseDashButton):
+    _attr_name = "Show Grid Overlay"
+    _attr_unique_id_suffix = "show_grid_overlay"
+    _attr_icon = "mdi:grid"
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._device_identifier}_{self._attr_unique_id_suffix}"
+
+    async def async_press(self) -> None:
+        # Draw 3x2 grid lines on page 0 using green lines
+        node = self._entry.data.get("node_name")
+        if not node:
+            return
+        # Geometry consistent with integration
+        base_x = 24
+        col_w = 128
+        col_gap = 24
+        xs = [base_x, base_x + col_w + col_gap, base_x + 2 * (col_w + col_gap), base_x + 3 * (col_w + col_gap)]
+        base_y = 80
+        row_gap = 20
+        avail = 430 - base_y
+        tile_h = (avail - row_gap) // 2
+        ys = [base_y, base_y + tile_h, base_y + tile_h + row_gap + tile_h]
+        # Vertical lines ids 240..243
+        for i, x in enumerate(xs):
+            await mqtt.async_publish(
+                self.hass,
+                f"hasp/{node}/command/jsonl",
+                f'{{"page":0,"obj":"obj","id":{240+i},"x":{x},"y":{base_y},"w":1,"h":{ys[-1]-base_y},"bg_color":"#00FF00","bg_opa":255,"border_width":0}}',
+            )
+        # Horizontal lines ids 244..246
+        for j, y in enumerate(ys):
+            await mqtt.async_publish(
+                self.hass,
+                f"hasp/{node}/command/jsonl",
+                f'{{"page":0,"obj":"obj","id":{244+j},"x":{xs[0]},"y":{y},"w":{xs[-1]-xs[0]},"h":1,"bg_color":"#00FF00","bg_opa":255,"border_width":0}}',
+            )
+
+
+class Dash480HideGridOverlayButton(_BaseDashButton):
+    _attr_name = "Hide Grid Overlay"
+    _attr_unique_id_suffix = "hide_grid_overlay"
+    _attr_icon = "mdi:grid-off"
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._device_identifier}_{self._attr_unique_id_suffix}"
+
+    async def async_press(self) -> None:
+        node = self._entry.data.get("node_name")
+        if not node:
+            return
+        # Hide ids 240..246
+        for _id in range(240, 247):
+            await mqtt.async_publish(
+                self.hass,
+                f"hasp/{node}/command/p0o{_id}.hidden",
+                "1",
             )
 
 
