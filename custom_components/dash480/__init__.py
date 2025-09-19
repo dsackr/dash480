@@ -636,18 +636,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 ])
                 # Prebuilt overlay: update title/options, then unhide elements
                 title = "Fan Speed" if kind == "fan_select" else "Light Color"
-                await mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}l{title_id}.text", title)
+                hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}l{title_id}.text", title))
                 if kind == "fan_select":
                     # Update matrix options
-                    await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btnmatrix","id":{matrix_id},"options":["Off","Low","Med","High"],"val":0}}')
+                    hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btnmatrix","id":{matrix_id},"options":["Off","Low","Med","High"],"val":0}}'))
                     meta = {"type": "fan_select", "entity": ent}
                 else:
-                    await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btnmatrix","id":{matrix_id},"options":["Off","Red","Green","Blue","Warm","Cool"],"val":0}}')
+                    hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btnmatrix","id":{matrix_id},"options":["Off","Red","Green","Blue","Warm","Cool"],"val":0}}'))
                     meta = {"type": "light_color", "entity": ent, "btn_id": btn_id}
                 hass.data[DOMAIN][entry.entry_id].setdefault("matrix_map", {})[f"p{p}m{matrix_id}"] = meta
                 # Unhide all overlay parts
                 for (typ, oid) in hass.data[DOMAIN][entry.entry_id].get("popup_overlay_targets", {}).get(p, [("b",193),("o",194),("l",195),("m",196),("b",197)]):
-                    await mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}{typ}{oid}.hidden", "0")
+                    hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}{typ}{oid}.hidden", "0"))
                 return
             # Home relays (page 1 IDs moved into 100..199 range)
             if topic_tail == "p1b112":
