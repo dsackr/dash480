@@ -32,6 +32,11 @@ LAYOUT_TEMPLATES: dict[str, list[dict]] = {
         {"row": 1, "col": 0}, {"row": 1, "col": 1}, {"row": 1, "col": 2},
         {"row": 2, "col": 0}, {"row": 2, "col": 1}, {"row": 2, "col": 2},
     ],
+    "shades_row": [
+        {"row": 0, "col": 0}, {"row": 0, "col": 1}, {"row": 0, "col": 2},
+        {"row": 1, "col": 0}, {"row": 1, "col": 1}, {"row": 1, "col": 2},
+        {"row": 2, "col": 0, "cs": 3, "rs": 1, "special": "shades"},
+    ],
 }
 
 def _tile_specs_for_layout(layout: str) -> list[dict]:
@@ -372,6 +377,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btn","id":{bid},"x":{cx},"y":{cy},"w":{chip},"h":{chip},"radius":6,"bg_color":"{hexcol}","bg_grad_dir":"none","border_width":0}}')
                         cmap[f"p{p}b{bid}"] = {"entity": ent, "payload": payload, "main_btn": base3+2}
                         cy += chip + csp; bid += 1
+                elif domain == "cover" and layout == "shades_row":
+                    # Shades spanning full row (3 columns)
+                    full_x = cell_xy(row, 0)[0]
+                    full_w = cell_wh(1, 3)[0]
+                    full_y = y + (h - 88) // 2
+                    # Background bar
+                    await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":{base3+5},"x":{full_x},"y":{full_y},"w":{full_w},"h":88,"radius":18,"bg_color":"#0B1220"}}')
+                    # Label on left
+                    await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"label","id":{base3+6},"x":{full_x+16},"y":{full_y+14},"w":{full_w-24},"h":20,"text":"{label}","text_font":18,"text_color":"#9CA3AF","bg_opa":0}}')
+                    # Matrix centered under label
+                    mid = base3 + 7
+                    await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btnmatrix","id":{mid},"x":{full_x+24},"y":{full_y+36},"w":{full_w-48},"h":44,"text_font":32,"options":["\\uE143","\\uE4DB","\\uE140"],"one_check":0,"radius":10}}')
+                    mi = {"type": "cover_cmd", "entity": ent}
+                    matrix_map[f"p{p}m{mid}"] = mi
+                    ent_matrix_map.setdefault(ent, []).append((p, mid, mi))
                 # Always map main button on/off
                 ctrl_map[f"p{p}b{base3+2}"] = ent
             else:

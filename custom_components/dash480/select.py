@@ -17,6 +17,7 @@ ALLOWED_DOMAINS = {"switch", "light", "fan", "sensor", "cover"}
 LAYOUT_OPTIONS = {
     "grid_3x3": "Grid 3×3",
     "clock_top": "Clock Top + 2 rows",
+    "shades_row": "Shades Row (bottom)",
 }
 
 
