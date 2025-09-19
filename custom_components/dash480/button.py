@@ -132,7 +132,7 @@ class Dash480ShowGridOverlayButton(_BaseDashButton):
         if not node:
             return
         # Geometry consistent with integration
-        base_x = 24
+        base_x = 20
         col_w = 128
         col_gap = 24
         xs = [base_x, base_x + col_w + col_gap, base_x + 2 * (col_w + col_gap), base_x + 3 * (col_w + col_gap)]
