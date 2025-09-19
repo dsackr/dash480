@@ -12,7 +12,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .const import DOMAIN
 
 
-ALLOWED_DOMAINS = {"switch", "light", "fan", "sensor"}
+ALLOWED_DOMAINS = {"switch", "light", "fan", "sensor", "cover"}
 
 LAYOUT_OPTIONS = {
     "grid_3x3": "Grid 3×3",
@@ -32,6 +32,8 @@ async def async_setup_entry(
         entities.append(Dash480PageLayoutSelect(hass, config_entry, p))
         entities.append(Dash480AddEntitySelect(hass, config_entry, p))
         entities.append(Dash480RemoveSlotSelect(hass, config_entry, p))
+        for s in range(1, 13):
+            entities.append(Dash480SlotIconSelect(hass, config_entry, p, s))
     async_add_entities(entities)
 
 
@@ -231,6 +233,64 @@ class Dash480RemoveSlotSelect(SelectEntity):
             except Exception:
                 pass
             self._unsub_update = None
+
+
+ICON_CHOICES = [
+    ("Power (E425)", "E425"),
+    ("Fan (E210)", "E210"),
+    ("Light (E335)", "E335"),
+    ("Up (E143)", "E143"),
+    ("Stop (E4DB)", "E4DB"),
+    ("Down (E140)", "E140"),
+]
+
+
+class Dash480SlotIconSelect(SelectEntity):
+    """Per-slot icon selection (codepoints from HASP font)."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, page: int, slot: int) -> None:
+        self.hass = hass
+        self._entry = entry
+        self._page = page
+        self._slot = slot
+        self._device_identifier = f"dash480_page_{entry.entry_id}"
+        self._device_name = f"Dash480 Page {page}"
+        self._attr_name = f"Slot {slot} Icon"
+        self._attr_unique_id = f"{self._device_identifier}_s{slot}_icon"
+        self._labels_to_codes = {label: code for label, code in ICON_CHOICES}
+        self._codes_to_labels = {code: label for label, code in ICON_CHOICES}
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._device_identifier)},
+            name=self._device_name,
+            manufacturer="openHASP",
+            model="ESP32-S3 480x480",
+        )
+
+    @property
+    def options(self) -> list[str]:
+        return [label for label, _ in ICON_CHOICES]
+
+    @property
+    def current_option(self) -> str | None:
+        code = self._entry.options.get(f"s{self._slot}_icon")
+        return self._codes_to_labels.get(code) if code else None
+
+    async def async_select_option(self, option: str) -> None:
+        code = self._labels_to_codes.get(option)
+        if not code:
+            return
+        opts = {**self._entry.options, f"s{self._slot}_icon": code}
+        self.hass.config_entries.async_update_entry(self._entry, options=opts)
+        # trigger a publish_all so the new icon applies
+        panel_id = self._entry.data.get("panel_entry_id")
+        if panel_id:
+            await self.hass.services.async_call(DOMAIN, "publish_all", {"entry_id": panel_id}, blocking=False)
+        self.async_write_ha_state()
 
 
 class Dash480PageLayoutSelect(SelectEntity):

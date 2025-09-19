@@ -328,7 +328,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             bx = x + max(20,(w-88)//2); by = y + max(40,(h-64)//2)
             domain = ent.split(".")[0]
             if domain in ("switch","light","fan"):
-                icon = "\\uE425"
+                # Icon selection by slot option, default per domain
+                icon_code = pe.options.get(f"{key}_icon") or ("E210" if domain=="fan" else "E425")
+                try:
+                    int(icon_code, 16)
+                except Exception:
+                    icon_code = "E425"
+                icon = f"\\u{icon_code}"
                 await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btn","id":{base3+2},"x":{bx},"y":{by},"w":88,"h":64,"text":"{icon}","text_font":64,"toggle":1,"radius":12,"bg_color":"#1E293B","bg_opa":255,"text_color":"#FFFFFF","border_width":0}}')
                 ent_toggle_map.setdefault(ent, []).append((p, base3+2))
                 is_light = domain=="light"; is_fan = domain=="fan"
@@ -337,8 +343,30 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 try:
                     m=",".join(modes).lower(); has_color=("hs" in m) or ("rgb" in m) or ("rgbw" in m) or ("rgbww" in m)
                 except Exception: pass
-                if is_fan or (is_light and has_color):
-                    hass.data[DOMAIN][entry.entry_id].setdefault("popup_map", {})[f"p{p}b{base3+2}"] = {"type": ("fan_select" if is_fan else "light_color"), "entity": ent, "page": p, "btn_id": base3+2}
+                if is_fan:
+                    # Inline fan speed matrix
+                    mid = base3 + 3
+                    mx = x + 8; my = y + h - 44; mw = w - 16
+                    await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btnmatrix","id":{mid},"x":{mx},"y":{my},"w":{mw},"h":36,"text_font":18,"options":["Off","Low","Med","High"],"toggle":1,"one_check":1,"val":0,"radius":8}}')
+                    mi = {"type": "fan_select", "entity": ent}
+                    matrix_map[f"p{p}m{mid}"] = mi
+                    ent_matrix_map.setdefault(ent, []).append((p, mid, mi))
+                elif is_light and has_color:
+                    # Inline color chips
+                    chip=28; csp=8; cx = x + w - chip - 8; cy = y + 28
+                    color_defs = [
+                        ("#FF0000", {"rgb_color":[255,0,0]}),
+                        ("#00FF00", {"rgb_color":[0,255,0]}),
+                        ("#0000FF", {"rgb_color":[0,0,255]}),
+                        ("#FDE68A", {"color_temp_kelvin":2700}),
+                        ("#D0E1FF", {"color_temp_kelvin":6500}),
+                    ]
+                    bid = base3 + 4
+                    cmap = hass.data[DOMAIN][entry.entry_id].setdefault("color_btn_map", {})
+                    for hexcol, payload in color_defs:
+                        await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btn","id":{bid},"x":{cx},"y":{cy},"w":{chip},"h":{chip},"radius":6,"bg_color":"{hexcol}","bg_grad_dir":"none","border_width":0}}')
+                        cmap[f"p{p}b{bid}"] = {"entity": ent, "payload": payload, "main_btn": base3+2}
+                        cy += chip + csp; bid += 1
                 else:
                     ctrl_map[f"p{p}b{base3+2}"] = ent
             else:
@@ -386,8 +414,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         matrix_map: dict[str, dict] = {}
         ent_toggle_map: dict[str, list[tuple[int,int]]] = {}
         ent_matrix_map: dict[str, list[tuple[int,int,dict]]] = {}
-        popup_map: dict[str, dict] = {}
-        popup_overlay_targets: dict[int, list[tuple[str,int]]] = {}
+        color_btn_map: dict[str, dict] = {}
         for pe in page_entries:
             p = int(pe.data.get("page_order", 99))
             await _publish_page_num(p, pe, ctrl_map, sensor_map, ent_toggle_map, ent_matrix_map)
@@ -396,8 +423,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN][entry.entry_id]["matrix_map"] = matrix_map
         hass.data[DOMAIN][entry.entry_id]["ent_toggle_map"] = ent_toggle_map
         hass.data[DOMAIN][entry.entry_id]["ent_matrix_map"] = ent_matrix_map
-        hass.data[DOMAIN][entry.entry_id]["popup_map"] = popup_map
-        hass.data[DOMAIN][entry.entry_id]["popup_overlay_targets"] = popup_overlay_targets
+        hass.data[DOMAIN][entry.entry_id]["color_btn_map"] = color_btn_map
         # rewire toggle/matrix listeners
         for key in list(hass.data[DOMAIN][entry.entry_id].keys()):
             if key.startswith("unsub_ent_"):
@@ -656,6 +682,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 payload = '{"state":"on"}' if val == 1 else '{"state":"off"}'
                 hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/output40", payload))
             else:
+                # Color chip handling
+                cmeta = hass.data[DOMAIN][entry.entry_id].get("color_btn_map", {}).get(topic_tail)
+                if cmeta:
+                    ent = cmeta["entity"]
+                    payload = cmeta.get("payload", {})
+                    # Always turn on when selecting a color
+                    data = {"entity_id": ent}
+                    data.update(payload)
+                    hass.async_create_task(hass.services.async_call("light", "turn_on", data))
+                    # Visually set the main power button to on
+                    try:
+                        pnum = int(topic_tail.split("b")[0].replace("p",""))
+                        main_btn = cmeta.get("main_btn")
+                        if main_btn:
+                            hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{pnum}b{main_btn}.val", "1"))
+                    except Exception:
+                        pass
+                    return
                 # Generic tile routing based on ctrl_map
                 ent = hass.data[DOMAIN][entry.entry_id].get("ctrl_map", {}).get(topic_tail)
                 if ent:
