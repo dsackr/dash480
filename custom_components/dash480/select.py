@@ -15,7 +15,8 @@ from .const import DOMAIN
 ALLOWED_DOMAINS = {"switch", "light", "fan", "sensor", "cover"}
 
 LAYOUT_OPTIONS = {
-    "grid_3x3": "Grid 3×3",
+    "grid_3x2": "Grid 3×2 (2 rows)",
+    "grid_3x3": "Grid 3×3 (legacy)",
     "clock_top": "Clock Top + 2 rows",
     "shades_row": "Shades Row (bottom)",
 }
@@ -325,7 +326,7 @@ class Dash480PageLayoutSelect(SelectEntity):
 
     @property
     def current_option(self) -> str | None:
-        key = self._entry.options.get("layout", "grid_3x3")
+        key = self._entry.options.get("layout", "grid_3x2")
         return LAYOUT_OPTIONS.get(key)
 
     async def async_select_option(self, option: str) -> None:

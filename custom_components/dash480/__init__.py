@@ -20,7 +20,12 @@ _LOGGER = logging.getLogger(__name__)
 # - rs, cs: row-span and col-span (defaults 1)
 # - special: optional (e.g., "clock")
 LAYOUT_TEMPLATES: dict[str, list[dict]] = {
-    # 9 tiles of size 1x1
+    # 6 tiles (3x2)
+    "grid_3x2": [
+        {"row": 0, "col": 0}, {"row": 0, "col": 1}, {"row": 0, "col": 2},
+        {"row": 1, "col": 0}, {"row": 1, "col": 1}, {"row": 1, "col": 2},
+    ],
+    # 9 tiles of size 1x1 (legacy)
     "grid_3x3": [
         {"row": 0, "col": 0}, {"row": 0, "col": 1}, {"row": 0, "col": 2},
         {"row": 1, "col": 0}, {"row": 1, "col": 1}, {"row": 1, "col": 2},
@@ -308,15 +313,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN][entry.entry_id].setdefault("popup_map", {})[f"p{p}b193"] = {"type": "close_popup", "page": p}
         hass.data[DOMAIN][entry.entry_id][f"p{p}b197"] = {"type": "close_popup", "page": p}
         # Draw tiles (reuse logic in _publish_all path)
-        # Geometry
+        # Geometry for 3 columns x 2 rows (maximized height)
         def cell_xy(rc: int, cc: int) -> tuple[int, int]:
             base_x = 24; col_step = 128 + 24
-            # Move grid up slightly
-            base_y = 100; row_step = 120 + 20
+            base_y = 80
+            # content bottom before footer is y=430
+            avail = 430 - base_y
+            row_gap = 20
+            tile_h = (avail - row_gap) // 2
+            row_step = tile_h + row_gap
             return (base_x + cc * col_step, base_y + rc * row_step)
         def cell_wh(rs: int, cs: int) -> tuple[int, int]:
-            w = 128 * cs + 24 * (cs - 1); h = 120 * rs + 20 * (rs - 1); return (w, h)
-        layout = pe.options.get("layout", "grid_3x3"); tiles = _tile_specs_for_layout(layout)
+            base_x = 24; col_step = 128 + 24
+            base_y = 80; row_gap = 20
+            avail = 430 - base_y
+            tile_h = (avail - row_gap) // 2
+            w = 128 * cs + 24 * (cs - 1); h = tile_h * rs + row_gap * (rs - 1); return (w, h)
+        layout = pe.options.get("layout", "grid_3x2"); tiles = _tile_specs_for_layout(layout)
         slot_index = 1
         for spec in tiles:
             rs=int(spec.get("rs",1)); cs=int(spec.get("cs",1)); row=int(spec.get("row",0)); col=int(spec.get("col",0))
