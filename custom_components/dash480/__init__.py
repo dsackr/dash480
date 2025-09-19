@@ -275,7 +275,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         for line in lines:
             await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", line)
 
-    async def _publish_page_num(p: int) -> None:
+    async def _publish_page_num(p: int, pe, ctrl_map: dict, sensor_map: dict, ent_toggle_map: dict, ent_matrix_map: dict) -> None:
         # Compute prev/next based on current configured pages
         all_entries = hass.config_entries.async_entries(DOMAIN)
         page_entries = [e for e in all_entries if e.data.get("role") == "page" and e.data.get("panel_entry_id") == entry.entry_id]
@@ -286,10 +286,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             i = ring.index(pp); return ring[(i-1) % len(ring)]
         def pnext(pp):
             i = ring.index(pp); return ring[(i+1) % len(ring)]
-        # Find page entry
-        pe = next((e for e in page_entries if int(e.data.get("page_order", 99)) == p), None)
-        if not pe:
-            return
         # Clear page and draw base
         await mqtt.async_publish(hass, f"hasp/{node_name}/command/clearpage", str(p))
         await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"id":0,"obj":"page","prev":{pprev(p)},"next":{pnext(p)}}}')
@@ -394,7 +390,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         popup_overlay_targets: dict[int, list[tuple[str,int]]] = {}
         for pe in page_entries:
             p = int(pe.data.get("page_order", 99))
-            await _publish_page_num(p)
+            await _publish_page_num(p, pe, ctrl_map, sensor_map, ent_toggle_map, ent_matrix_map)
         hass.data[DOMAIN][entry.entry_id]["ctrl_map"] = ctrl_map
         hass.data[DOMAIN][entry.entry_id]["sensor_map"] = sensor_map
         hass.data[DOMAIN][entry.entry_id]["matrix_map"] = matrix_map
@@ -789,9 +785,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         pass
         # Long-press on header title rebuilds current page
         if topic_tail == "p0b2" and event == "long":
-            cp = hass.data[DOMAIN][entry.entry_id].get("current_page")
-            if isinstance(cp, int) and cp >= 2:
-                hass.async_create_task(_publish_page_num(cp))
+            # Rebuild full layout to keep maps in sync
+            hass.async_create_task(_publish_all())
 
     unsub_events = await mqtt.async_subscribe(hass, f"hasp/{node_name}/state/#", _state_event)
     hass.data[DOMAIN][entry.entry_id]["unsub_events"] = unsub_events
