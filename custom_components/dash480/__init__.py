@@ -204,6 +204,14 @@ async def async_setup(hass: HomeAssistant, config):
             base_y = 120
             col_step = 128 + 24
             row_step = 120 + 20
+
+            def cell_xy(row: int, col: int) -> tuple[int, int]:
+                return (base_x + col * col_step, base_y + row * row_step)
+
+            def cell_wh(rs: int, cs: int) -> tuple[int, int]:
+                width = 128 * cs + 24 * (cs - 1)
+                height = (120 * rs) + 20 * (rs - 1)
+                return width, height
             for spec, slot in assignments:
                 if not slot:
                     continue
@@ -211,10 +219,8 @@ async def async_setup(hass: HomeAssistant, config):
                 cs = int(spec.get("cs", 1))
                 row = int(spec.get("row", 0))
                 col = int(spec.get("col", 0))
-                x = base_x + col * col_step
-                y = base_y + row * row_step
-                w = 128 * cs + 24 * (cs - 1)
-                h = (120 * rs) + 20 * (rs - 1)
+                x, y = cell_xy(row, col)
+                w, h = cell_wh(rs, cs)
                 if spec.get("special") == "clock":
                     lines.append(f'{{"page":{p},"obj":"label","id":70,"x":{x},"y":{y+4},"w":{w},"h":{h-8},"text":"00:00","template":"%H:%M","text_font":96,"align":"center","text_color":"#E5E7EB","bg_opa":0}}')
                     continue
