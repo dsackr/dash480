@@ -1,6 +1,7 @@
 """The Dash480 integration."""
 from __future__ import annotations
 
+import json
 import logging
 import os
 from homeassistant.components import mqtt
@@ -230,6 +231,16 @@ async def async_setup(hass: HomeAssistant, config):
                 render_index += 1
                 st_ent = hass.states.get(ent)
                 label = st_ent.attributes.get("friendly_name", ent) if st_ent else ent
+                special = spec.get("special")
+                if special == "shades":
+                    full_x = cell_xy(row, 0)[0]
+                    full_w = cell_wh(1, 3)[0]
+                    full_y = y + (h - 88) // 2
+                    lines.append(f'{{"page":{p},"obj":"obj","id":{base+5},"x":{full_x},"y":{full_y},"w":{full_w},"h":88,"radius":18,"bg_color":"#0B1220"}}')
+                    lines.append(f'{{"page":{p},"obj":"label","id":{base+6},"x":{full_x+18},"y":{full_y+12},"w":{full_w-36},"h":24,"text":"{label}","text_font":20,"text_color":"#9CA3AF","bg_opa":0}}')
+                    lines.append(f'{{"page":{p},"obj":"btnmatrix","id":{base+7},"x":{full_x+30},"y":{full_y+42},"w":{full_w-60},"h":56,"text_font":28,"options":["Up","Pause","Down"],"one_check":0,"radius":12}}')
+                    continue
+
                 lines.append(f'{{"page":{p},"obj":"obj","id":{base+1},"x":{x},"y":{y},"w":{w},"h":{h},"radius":14,"bg_color":"#1E293B","bg_opa":255,"click":false}}')
                 lines.append(f'{{"page":{p},"obj":"label","id":{base},"x":{x+8},"y":{y+6},"w":{w-16},"h":24,"text":"{label}","text_font":18,"text_color":"#9CA3AF","bg_opa":0}}')
                 domain = ent.split(".")[0]
@@ -263,13 +274,6 @@ async def async_setup(hass: HomeAssistant, config):
                 elif domain == "sensor":
                     val = st_ent.state if st_ent and st_ent.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, "") else "--"
                     lines.append(f'{{"page":{p},"obj":"btn","id":{base+2},"x":{x + max(20,(w-88)//2)},"y":{y+40},"w":88,"h":64,"text":"{val}","text_font":20,"toggle":false,"bg_opa":0,"border_width":0,"radius":0}}')
-                elif domain == "cover" and layout == "shades_row":
-                    full_x = cell_xy(row, 0)[0]
-                    full_w = cell_wh(1, 3)[0]
-                    full_y = y + (h - 88) // 2
-                    lines.append(f'{{"page":{p},"obj":"obj","id":{base+5},"x":{full_x},"y":{full_y},"w":{full_w},"h":88,"radius":18,"bg_color":"#0B1220"}}')
-                    lines.append(f'{{"page":{p},"obj":"label","id":{base+6},"x":{full_x+18},"y":{full_y+12},"w":{full_w-36},"h":24,"text":"{label}","text_font":20,"text_color":"#9CA3AF","bg_opa":0}}')
-                    lines.append(f'{{"page":{p},"obj":"btnmatrix","id":{base+7},"x":{full_x+30},"y":{full_y+42},"w":{full_w-60},"h":56,"text_font":28,"options":["Up","Pause","Down"],"one_check":0,"radius":12}}')
                 else:
                     val = st_ent.state if st_ent and st_ent.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, "") else "--"
                     lines.append(f'{{"page":{p},"obj":"btn","id":{base+2},"x":{x + max(20,(w-88)//2)},"y":{y+40},"w":88,"h":64,"text":"{val}","text_font":20,"toggle":false,"bg_opa":0,"border_width":0,"radius":0}}')
@@ -489,11 +493,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             row_step = tile_h + row_gap
             return (base_x + cc * col_step, base_y + rc * row_step)
         def cell_wh(rs: int, cs: int) -> tuple[int, int]:
-            base_x = 24; col_step = 128 + 24
-            base_y = 80; row_gap = 20
-            avail = 430 - base_y
-            tile_h = (avail - row_gap) // 2
-            w = 128 * cs + 24 * (cs - 1); h = tile_h * rs + row_gap * (rs - 1); return (w, h)
+            w = 128 * cs + 24 * (cs - 1)
+            h = (120 * rs) + 20 * (rs - 1)
+            return (w, h)
         render_index = 1
         for spec, slot in assignments:
             if not slot:
@@ -507,6 +509,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             slot_digit = min(render_index,9); base3 = slot_digit*10
             render_index += 1
             st_ent = hass.states.get(ent); label = st_ent.attributes.get("friendly_name", ent) if st_ent else ent
+            special = spec.get("special")
+            if special == "shades":
+                full_x = cell_xy(row, 0)[0]
+                full_w = cell_wh(1, 3)[0]
+                full_y = y + (h - 88) // 2
+                await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":{base3+5},"x":{full_x},"y":{full_y},"w":{full_w},"h":88,"radius":18,"bg_color":"#0B1220"}}')
+                await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"label","id":{base3+6},"x":{full_x+18},"y":{full_y+12},"w":{full_w-36},"h":24,"text":"{label}","text_font":20,"text_color":"#9CA3AF","bg_opa":0}}')
+                mid = base3 + 7
+                await mqtt.async_publish(
+                    hass,
+                    f"hasp/{node_name}/command/jsonl",
+                    f'{{"page":{p},"obj":"btnmatrix","id":{mid},"x":{full_x+30},"y":{full_y+42},"w":{full_w-60},"h":56,"text_font":28,"options":["Up","Pause","Down"],"one_check":0,"radius":12}}',
+                )
+                mi = {"type": "cover_cmd", "entity": ent}
+                matrix_map[f"p{p}m{mid}"] = mi
+                ent_matrix_map.setdefault(ent, []).append((p, mid, mi))
+                continue
+
             await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":{base3+1},"x":{x},"y":{y},"w":{w},"h":{h},"radius":14,"bg_color":"#1E293B","bg_opa":255,"click":false}}')
             await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"label","id":{base3},"x":{x+8},"y":{y+6},"w":{max(112,w-16)},"h":24,"text":"{label}","text_font":18,"text_color":"#9CA3AF","bg_opa":0}}')
             # Place icon lower so it is easier to press and leave breathing room for the label
@@ -643,7 +663,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 f"hasp/{node_name}/command/jsonl",
                 f'{{\"page\":{page_id},\"obj\":\"btn\",\"id\":{close_id},\"x\":360,\"y\":24,\"w\":96,\"h\":48,\"text\":\"Close\",\"text_font\":24,\"radius\":12,\"bg_color\":\"#1F2937\",\"text_color\":\"#FFFFFF\",\"border_width\":0}}'
             )
-            option_close_map[f"p{page_id}b{close_id}"] = {"return_page": origin}
+            option_close_map[f"p{page_id}b{close_id}"] = {"return_page": origin, "entity": entity}
 
             if option_type == "fan":
                 status_label_id = 40
@@ -914,7 +934,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         topic_tail = msg.topic.split("/")[-1]
         data = None
         try:
-            import json
             data = json.loads(msg.payload)
         except Exception:
             data = None
@@ -928,6 +947,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         else:
             event = ""
             val = -1
+        def _queue_page(page_id: int) -> None:
+            hass.async_create_task(
+                mqtt.async_publish(
+                    hass,
+                    f"hasp/{node_name}/command/json",
+                    json.dumps({"page": page_id}),
+                )
+            )
+
         # Relay button routing on 'up'
         if event == "up":
             # Global cooldown guard to ignore any touch for a brief period after closing a popup
@@ -940,11 +968,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             option_close = hass.data[DOMAIN][entry.entry_id].get("option_close_map", {}).get(topic_tail)
             if option_close:
                 return_page = option_close.get("return_page", 1)
-                hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/page", str(return_page)))
+                _queue_page(return_page)
+                entity_for_sync = option_close.get("entity")
+                if entity_for_sync:
+                    hass.async_create_task(_sync_entity_state(entity_for_sync))
                 return
             option_open = hass.data[DOMAIN][entry.entry_id].get("option_open_map", {}).get(topic_tail)
             if option_open:
-                hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/page", str(option_open.get("page_id"))))
+                target_page = option_open.get("page_id")
+                _queue_page(target_page)
                 entity_for_sync = option_open.get("entity")
                 if entity_for_sync:
                     hass.async_create_task(_sync_entity_state(entity_for_sync))
