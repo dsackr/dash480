@@ -323,6 +323,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         popup_map[f"p{p}b193"] = {"type": "close_popup", "page": p}
         popup_map[f"p{p}b197"] = {"type": "close_popup", "page": p}
         # Draw tiles (reuse logic in _publish_all path)
+        # Auto-select layout when unspecified so covers get full-width row controls
+        layout = pe.options.get("layout")
+        if not layout:
+            slots = [pe.options.get(f"s{i}", "") for i in range(1, 13)]
+            if any(ent and ent.split(".")[0] == "cover" for ent in slots):
+                layout = "shades_row"
+            else:
+                layout = "grid_3x2"
+        tiles = _tile_specs_for_layout(layout)
         # Geometry for 3 columns x 2 rows (maximized height)
         def cell_xy(rc: int, cc: int) -> tuple[int, int]:
             base_x = 24; col_step = 128 + 24
@@ -339,7 +348,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             avail = 430 - base_y
             tile_h = (avail - row_gap) // 2
             w = 128 * cs + 24 * (cs - 1); h = tile_h * rs + row_gap * (rs - 1); return (w, h)
-        layout = pe.options.get("layout", "grid_3x2"); tiles = _tile_specs_for_layout(layout)
         slot_index = 1
         for spec in tiles:
             rs=int(spec.get("rs",1)); cs=int(spec.get("cs",1)); row=int(spec.get("row",0)); col=int(spec.get("col",0))
@@ -353,9 +361,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             slot_digit = min(slot_index-1,9); base3 = slot_digit*10
             st_ent = hass.states.get(ent); label = st_ent.attributes.get("friendly_name", ent) if st_ent else ent
             await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":{base3+1},"x":{x},"y":{y},"w":{w},"h":{h},"radius":14,"bg_color":"#1E293B","bg_opa":255,"click":false}}')
-            await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"label","id":{base3},"x":{x+8},"y":{y+8},"w":{max(112,w-16)},"h":22,"text":"{label}","text_font":18,"text_color":"#9CA3AF","bg_opa":0}}')
-            # Place icon higher to leave room for inline controls
-            bx = x + max(20,(w-88)//2); by = y + 24
+            await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"label","id":{base3},"x":{x+8},"y":{y+6},"w":{max(112,w-16)},"h":24,"text":"{label}","text_font":18,"text_color":"#9CA3AF","bg_opa":0}}')
+            # Place icon lower so it is easier to press and leave breathing room for the label
+            bx = x + max(20,(w-96)//2); by = y + 36
             domain = ent.split(".")[0]
             if domain in ("switch","light","fan"):
                 # Icon selection by slot option, default per domain
@@ -365,7 +373,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 except Exception:
                     icon_code = "E425"
                 icon = f"\\u{icon_code}"
-                await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btn","id":{base3+2},"x":{bx},"y":{by},"w":88,"h":64,"text":"{icon}","text_font":64,"toggle":1,"radius":12,"bg_color":"#1E293B","bg_opa":255,"text_color":"#FFFFFF","border_width":0}}')
+                await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btn","id":{base3+2},"x":{bx},"y":{by},"w":96,"h":72,"text":"{icon}","text_font":72,"toggle":1,"radius":14,"bg_color":"#1E293B","bg_opa":255,"text_color":"#FFFFFF","border_width":0}}')
                 ent_toggle_map.setdefault(ent, []).append((p, base3+2))
                 is_light = domain=="light"; is_fan = domain=="fan"
                 modes = st_ent.attributes.get("supported_color_modes", []) if st_ent else []
@@ -376,17 +384,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 if is_fan:
                     # Inline fan speed matrix
                     mid = base3 + 3
-                    mx = x + 8; mw = w - 16
-                    mh = 28; my = y + h - mh - 8
-                    await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btnmatrix","id":{mid},"x":{mx},"y":{my},"w":{mw},"h":{mh},"text_font":18,"options":["Off","Low","Med","High"],"toggle":1,"one_check":1,"val":0,"radius":8}}')
+                    mx = x + 12; mw = w - 24
+                    mh = 52; my = y + h - mh - 12
+                    await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btnmatrix","id":{mid},"x":{mx},"y":{my},"w":{mw},"h":{mh},"text_font":26,"options":["Off","Low","Med","High"],"toggle":1,"one_check":1,"val":0,"radius":12}}')
                     mi = {"type": "fan_select", "entity": ent}
                     matrix_map[f"p{p}m{mid}"] = mi
                     ent_matrix_map.setdefault(ent, []).append((p, mid, mi))
                 elif is_light and has_color:
                     # Inline color chips
-                    chip=18; csp=6; cx = x + w - chip - 6
+                    chip=26; csp=8; cx = x + w - chip - 12
                     total_h = chip*5 + csp*4
-                    cy = y + max(6, (h - total_h)//2)
+                    cy = y + max(10, (h - total_h)//2)
                     color_defs = [
                         ("#FF0000", {"rgb_color":[255,0,0]}),
                         ("#00FF00", {"rgb_color":[0,255,0]}),
@@ -396,7 +404,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     ]
                     bid = base3 + 4
                     for hexcol, payload in color_defs:
-                        await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btn","id":{bid},"x":{cx},"y":{cy},"w":{chip},"h":{chip},"radius":6,"bg_color":"{hexcol}","bg_grad_dir":"none","border_width":0}}')
+                        await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btn","id":{bid},"x":{cx},"y":{cy},"w":{chip},"h":{chip},"radius":8,"bg_color":"{hexcol}","bg_grad_dir":"none","border_width":0}}')
                         color_btn_map[f"p{p}b{bid}"] = {"entity": ent, "payload": payload, "main_btn": base3+2}
                         cy += chip + csp; bid += 1
                 elif domain == "cover" and layout == "shades_row":
@@ -407,10 +415,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     # Background bar
                     await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":{base3+5},"x":{full_x},"y":{full_y},"w":{full_w},"h":88,"radius":18,"bg_color":"#0B1220"}}')
                     # Label on left
-                    await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"label","id":{base3+6},"x":{full_x+16},"y":{full_y+14},"w":{full_w-24},"h":20,"text":"{label}","text_font":18,"text_color":"#9CA3AF","bg_opa":0}}')
+                    await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"label","id":{base3+6},"x":{full_x+18},"y":{full_y+12},"w":{full_w-36},"h":24,"text":"{label}","text_font":20,"text_color":"#9CA3AF","bg_opa":0}}')
                     # Matrix centered under label
                     mid = base3 + 7
-                    await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btnmatrix","id":{mid},"x":{full_x+24},"y":{full_y+36},"w":{full_w-48},"h":44,"text_font":32,"options":["\\uE143","\\uE4DB","\\uE140"],"one_check":0,"radius":10}}')
+                    await mqtt.async_publish(
+                        hass,
+                        f"hasp/{node_name}/command/jsonl",
+                        f'{{"page":{p},"obj":"btnmatrix","id":{mid},"x":{full_x+30},"y":{full_y+42},"w":{full_w-60},"h":56,"text_font":28,"options":["Up","Pause","Down"],"one_check":0,"radius":12}}',
+                    )
                     mi = {"type": "cover_cmd", "entity": ent}
                     matrix_map[f"p{p}m{mid}"] = mi
                     ent_matrix_map.setdefault(ent, []).append((p, mid, mi))
