@@ -294,6 +294,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         ent_matrix_map: dict,
         matrix_map: dict,
         color_btn_map: dict,
+        fan_speed_map: dict,
     ) -> None:
         # Compute prev/next based on current configured pages
         all_entries = hass.config_entries.async_entries(DOMAIN)
@@ -325,13 +326,30 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Draw tiles (reuse logic in _publish_all path)
         # Auto-select layout when unspecified so covers get full-width row controls
         layout = pe.options.get("layout")
-        if not layout:
-            slots = [pe.options.get(f"s{i}", "") for i in range(1, 13)]
-            if any(ent and ent.split(".")[0] == "cover" for ent in slots):
+        slots_all = [(f"s{i}", pe.options.get(f"s{i}", "")) for i in range(1, 13)]
+        if layout != "shades_row":
+            if any(ent and ent.split(".")[0] == "cover" for _, ent in slots_all):
                 layout = "shades_row"
-            else:
-                layout = "grid_3x2"
+        if not layout:
+            layout = "grid_3x2"
         tiles = _tile_specs_for_layout(layout)
+        # Pair layout slots with configured entities, preferring the shades row for covers
+        filled_slots = [(key, ent) for key, ent in slots_all if ent]
+        assignments: list[tuple[dict, tuple[str, str] | None]] = []
+        if layout == "shades_row":
+            cover_queue = [(k, e) for (k, e) in filled_slots if e.split(".")[0] == "cover"]
+            other_queue = [(k, e) for (k, e) in filled_slots if e.split(".")[0] != "cover"]
+            for spec in tiles:
+                if spec.get("special") == "shades":
+                    slot = cover_queue.pop(0) if cover_queue else (other_queue.pop(0) if other_queue else None)
+                else:
+                    slot = other_queue.pop(0) if other_queue else (cover_queue.pop(0) if cover_queue else None)
+                assignments.append((spec, slot))
+        else:
+            queue = filled_slots.copy()
+            for spec in tiles:
+                slot = queue.pop(0) if queue else None
+                assignments.append((spec, slot))
         # Geometry for 3 columns x 2 rows (maximized height)
         def cell_xy(rc: int, cc: int) -> tuple[int, int]:
             base_x = 24; col_step = 128 + 24
@@ -348,17 +366,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             avail = 430 - base_y
             tile_h = (avail - row_gap) // 2
             w = 128 * cs + 24 * (cs - 1); h = tile_h * rs + row_gap * (rs - 1); return (w, h)
-        slot_index = 1
-        for spec in tiles:
+        render_index = 1
+        for spec, slot in assignments:
+            if not slot:
+                continue
             rs=int(spec.get("rs",1)); cs=int(spec.get("cs",1)); row=int(spec.get("row",0)); col=int(spec.get("col",0))
             x,y = cell_xy(row,col); w,h = cell_wh(rs,cs)
             if spec.get("special") == "clock":
                 await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"label","id":70,"x":{x},"y":{y+4},"w":{w},"h":{h-8},"text":"00:00","template":"%H:%M","text_font":96,"align":"center","text_color":"#E5E7EB","bg_opa":0}}')
                 continue
-            key = f"s{slot_index}"; slot_index += 1
-            ent = pe.options.get(key, "");
-            if not ent: continue
-            slot_digit = min(slot_index-1,9); base3 = slot_digit*10
+            key, ent = slot
+            slot_digit = min(render_index,9); base3 = slot_digit*10
+            render_index += 1
             st_ent = hass.states.get(ent); label = st_ent.attributes.get("friendly_name", ent) if st_ent else ent
             await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":{base3+1},"x":{x},"y":{y},"w":{w},"h":{h},"radius":14,"bg_color":"#1E293B","bg_opa":255,"click":false}}')
             await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"label","id":{base3},"x":{x+8},"y":{y+6},"w":{max(112,w-16)},"h":24,"text":"{label}","text_font":18,"text_color":"#9CA3AF","bg_opa":0}}')
@@ -382,14 +401,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     m=",".join(modes).lower(); has_color=("hs" in m) or ("rgb" in m) or ("rgbw" in m) or ("rgbww" in m)
                 except Exception: pass
                 if is_fan:
-                    # Inline fan speed matrix
-                    mid = base3 + 3
-                    mx = x + 12; mw = w - 24
-                    mh = 52; my = y + h - mh - 12
-                    await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btnmatrix","id":{mid},"x":{mx},"y":{my},"w":{mw},"h":{mh},"text_font":26,"options":["Off","Low","Med","High"],"toggle":1,"one_check":1,"val":0,"radius":12}}')
-                    mi = {"type": "fan_select", "entity": ent}
-                    matrix_map[f"p{p}m{mid}"] = mi
-                    ent_matrix_map.setdefault(ent, []).append((p, mid, mi))
+                    # Provide a large Speed button that opens the popup selector
+                    speed_id = base3 + 3
+                    sx = x + 12; sw = w - 24
+                    sh = 56; sy = y + h - sh - 14
+                    await mqtt.async_publish(
+                        hass,
+                        f"hasp/{node_name}/command/jsonl",
+                        f'{{"page":{p},"obj":"btn","id":{speed_id},"x":{sx},"y":{sy},"w":{sw},"h":{sh},"text":"Speed","text_font":24,"toggle":0,"radius":12,"bg_color":"#0F172A","bg_opa":255,"text_color":"#FFFFFF","border_width":0}}',
+                    )
+                    popup_map[f"p{p}b{speed_id}"] = {"type": "fan_select", "entity": ent, "btn_id": speed_id}
+                    fan_speed_map.setdefault(ent, []).append((p, speed_id))
                 elif is_light and has_color:
                     # Inline color chips
                     chip=26; csp=8; cx = x + w - chip - 12
@@ -474,6 +496,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         ent_toggle_map: dict[str, list[tuple[int,int]]] = {}
         ent_matrix_map: dict[str, list[tuple[int,int,dict]]] = {}
         color_btn_map: dict[str, dict] = {}
+        fan_speed_btn_map: dict[str, list[tuple[int,int]]] = {}
         for pe in page_entries:
             p = int(pe.data.get("page_order", 99))
             await _publish_page_num(
@@ -485,6 +508,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 ent_matrix_map,
                 matrix_map,
                 color_btn_map,
+                fan_speed_btn_map,
             )
         hass.data[DOMAIN][entry.entry_id]["ctrl_map"] = ctrl_map
         hass.data[DOMAIN][entry.entry_id]["sensor_map"] = sensor_map
@@ -492,6 +516,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN][entry.entry_id]["ent_toggle_map"] = ent_toggle_map
         hass.data[DOMAIN][entry.entry_id]["ent_matrix_map"] = ent_matrix_map
         hass.data[DOMAIN][entry.entry_id]["color_btn_map"] = color_btn_map
+        hass.data[DOMAIN][entry.entry_id]["fan_speed_btn_map"] = fan_speed_btn_map
         # rewire toggle/matrix listeners
         for key in list(hass.data[DOMAIN][entry.entry_id].keys()):
             if key.startswith("unsub_ent_"):
@@ -532,7 +557,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     await mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}m{mid}.val", str(idx))
             # Update color tint for color-capable lights (main button text_color)
             domain = entity_id.split(".")[0]
-            if domain == "light":
+            if domain == "fan":
+                label = "Off"
+                state_on = str(st.state).lower() == "on"
+                if state_on:
+                    preset = (st.attributes.get("preset_mode") or "").strip()
+                    pct = st.attributes.get("percentage")
+                    if preset:
+                        label = preset.title()
+                    elif isinstance(pct, (int, float)):
+                        if pct <= 0:
+                            label = "Off"
+                        elif pct <= 33:
+                            label = "Low"
+                        elif pct <= 66:
+                            label = "Med"
+                        else:
+                            label = "High"
+                    else:
+                        label = "On"
+                for p, btn_id in hass.data[DOMAIN][entry.entry_id].get("fan_speed_btn_map", {}).get(entity_id, []):
+                    await mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}b{btn_id}.text", label)
+            elif domain == "light":
                 rgb = st.attributes.get("rgb_color")
                 color_temp = st.attributes.get("color_temp_kelvin") or st.attributes.get("color_temp")
                 color_hex = None
