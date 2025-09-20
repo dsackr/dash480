@@ -151,44 +151,163 @@ async def async_setup(hass: HomeAssistant, config):
             prev_home = page_numbers[-1]
             next_home = page_numbers[0]
             lines.append(f'{{"page":1,"id":0,"obj":"page","prev":{prev_home},"next":{next_home}}}')
+
         def pprev(p):
             idx = pages_ring.index(p)
             return pages_ring[(idx - 1) % len(pages_ring)]
+
         def pnext(p):
             idx = pages_ring.index(p)
             return pages_ring[(idx + 1) % len(pages_ring)]
+
+        option_specs: list[dict] = []
+        next_option_page = 50
+
+        def alloc_option_page() -> int:
+            nonlocal next_option_page
+            pid = next_option_page
+            next_option_page += 1
+            return pid
+
         for pe in page_entries:
             p = int(pe.data.get("page_order", 99))
             lines.append(f'{{"page":{p},"id":0,"obj":"page","prev":{pprev(p)},"next":{pnext(p)}}}')
-            # Match runtime layout background area; keep id within byte range per page
             lines.append(f'{{"page":{p},"obj":"obj","id":80,"x":0,"y":0,"w":480,"h":480,"bg_color":"#0B1220","bg_opa":255,"click":false}}')
-            for idx in range(1, 13):
-                key = f"s{idx}"
-                ent = pe.options.get(key, "")
-                if not ent:
+
+            layout = pe.options.get("layout")
+            slot_defs = [(f"s{i}", pe.options.get(f"s{i}", "")) for i in range(1, 13)]
+            if layout != "shades_row" and any(ent and ent.split(".")[0] == "cover" for _, ent in slot_defs):
+                layout = "shades_row"
+            if not layout:
+                layout = "grid_3x2"
+            tiles = _tile_specs_for_layout(layout)
+
+            filled_slots = [(key, ent) for key, ent in slot_defs if ent]
+            assignments: list[tuple[dict, tuple[str, str] | None]] = []
+            if layout == "shades_row":
+                cover_queue = [(k, e) for (k, e) in filled_slots if e.split(".")[0] == "cover"]
+                other_queue = [(k, e) for (k, e) in filled_slots if e.split(".")[0] != "cover"]
+                for spec in tiles:
+                    if spec.get("special") == "shades":
+                        slot = cover_queue.pop(0) if cover_queue else (other_queue.pop(0) if other_queue else None)
+                    else:
+                        slot = other_queue.pop(0) if other_queue else (cover_queue.pop(0) if cover_queue else None)
+                    assignments.append((spec, slot))
+            else:
+                queue = filled_slots.copy()
+                for spec in tiles:
+                    slot = queue.pop(0) if queue else None
+                    assignments.append((spec, slot))
+
+            render_index = 1
+            base_x = 24
+            base_y = 120
+            col_step = 128 + 24
+            row_step = 120 + 20
+            for spec, slot in assignments:
+                if not slot:
                     continue
-                i0 = idx - 1
-                col = i0 % 3
-                row = i0 // 3
-                # Export geometry matches runtime
-                base_x = 24; col_step = 128 + 24
-                base_y = 120; row_step = 120 + 20
+                rs = int(spec.get("rs", 1))
+                cs = int(spec.get("cs", 1))
+                row = int(spec.get("row", 0))
+                col = int(spec.get("col", 0))
                 x = base_x + col * col_step
                 y = base_y + row * row_step
-                # Use per-page ids within 1..255 (repeat ids across pages)
-                slot_digit = idx if idx <= 9 else 9
+                w = 128 * cs + 24 * (cs - 1)
+                h = (120 * rs) + 20 * (rs - 1)
+                if spec.get("special") == "clock":
+                    lines.append(f'{{"page":{p},"obj":"label","id":70,"x":{x},"y":{y+4},"w":{w},"h":{h-8},"text":"00:00","template":"%H:%M","text_font":96,"align":"center","text_color":"#E5E7EB","bg_opa":0}}')
+                    continue
+                key, ent = slot
+                slot_digit = min(render_index, 9)
                 base = slot_digit * 10
+                render_index += 1
                 st_ent = hass.states.get(ent)
                 label = st_ent.attributes.get("friendly_name", ent) if st_ent else ent
-                lines.append(f'{{"page":{p},"obj":"obj","id":{base+1},"x":{x},"y":{y},"w":128,"h":120,"radius":14,"bg_color":"#1E293B","bg_opa":255,"click":false}}')
-                lines.append(f'{{"page":{p},"obj":"label","id":{base},"x":{x+8},"y":{y+8},"w":{128-16},"h":22,"text":"{label}","text_font":18,"text_color":"#9CA3AF","bg_opa":0}}')
+                lines.append(f'{{"page":{p},"obj":"obj","id":{base+1},"x":{x},"y":{y},"w":{w},"h":{h},"radius":14,"bg_color":"#1E293B","bg_opa":255,"click":false}}')
+                lines.append(f'{{"page":{p},"obj":"label","id":{base},"x":{x+8},"y":{y+6},"w":{w-16},"h":24,"text":"{label}","text_font":18,"text_color":"#9CA3AF","bg_opa":0}}')
                 domain = ent.split(".")[0]
                 if domain in ("switch", "light", "fan"):
                     icon = "\\uE4DC" if domain == "fan" else "\\uE425"
-                    lines.append(f'{{"page":{p},"obj":"btn","id":{base+2},"x":{x+20},"y":{y+40},"w":{88},"h":{64},"text":"{icon}","text_font":64,"toggle":true,"radius":12,"bg_color":"#1E293B","bg_opa":255,"text_color":"#FFFFFF","border_width":0}}')
+                    lines.append(f'{{"page":{p},"obj":"btn","id":{base+2},"x":{x + max(20,(w-96)//2)},"y":{y+36},"w":96,"h":72,"text":"{icon}","text_font":72,"toggle":true,"radius":14,"bg_color":"#1E293B","bg_opa":255,"text_color":"#FFFFFF","border_width":0}}')
+                    if domain == "fan":
+                        lines.append(f'{{"page":{p},"obj":"label","id":{base+3},"x":{x+8},"y":{y+h-36},"w":{w-16},"h":28,"text":"Tap for speed","text_font":20,"align":"center","text_color":"#9CA3AF","bg_opa":0}}')
+                        option_specs.append({
+                            "entity": ent,
+                            "type": "fan",
+                            "origin_page": p,
+                            "page_id": alloc_option_page(),
+                            "friendly_name": label,
+                            "trigger_topic": f"p{p}b{base+2}",
+                        })
+                    elif domain == "light" and st_ent and st_ent.attributes.get("supported_color_modes"):
+                        modes = st_ent.attributes.get("supported_color_modes", [])
+                        mode_str = ",".join(modes).lower()
+                        has_color = any(m in mode_str for m in ("hs", "rgb", "rgbw", "rgbww"))
+                        if has_color:
+                            lines.append(f'{{"page":{p},"obj":"label","id":{base+3},"x":{x+8},"y":{y+h-36},"w":{w-16},"h":28,"text":"Tap for color","text_font":20,"align":"center","text_color":"#9CA3AF","bg_opa":0}}')
+                            option_specs.append({
+                                "entity": ent,
+                                "type": "light_color",
+                                "origin_page": p,
+                                "page_id": alloc_option_page(),
+                                "friendly_name": label,
+                                "trigger_topic": f"p{p}b{base+2}",
+                            })
                 elif domain == "sensor":
                     val = st_ent.state if st_ent and st_ent.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, "") else "--"
-                    lines.append(f'{{"page":{p},"obj":"btn","id":{base+2},"x":{x+20},"y":{y+40},"w":88,"h":64,"text":"{val}","text_font":20,"toggle":false,"bg_opa":0,"border_width":0,"radius":0}}')
+                    lines.append(f'{{"page":{p},"obj":"btn","id":{base+2},"x":{x + max(20,(w-88)//2)},"y":{y+40},"w":88,"h":64,"text":"{val}","text_font":20,"toggle":false,"bg_opa":0,"border_width":0,"radius":0}}')
+                elif domain == "cover" and layout == "shades_row":
+                    full_x = cell_xy(row, 0)[0]
+                    full_w = cell_wh(1, 3)[0]
+                    full_y = y + (h - 88) // 2
+                    lines.append(f'{{"page":{p},"obj":"obj","id":{base+5},"x":{full_x},"y":{full_y},"w":{full_w},"h":88,"radius":18,"bg_color":"#0B1220"}}')
+                    lines.append(f'{{"page":{p},"obj":"label","id":{base+6},"x":{full_x+18},"y":{full_y+12},"w":{full_w-36},"h":24,"text":"{label}","text_font":20,"text_color":"#9CA3AF","bg_opa":0}}')
+                    lines.append(f'{{"page":{p},"obj":"btnmatrix","id":{base+7},"x":{full_x+30},"y":{full_y+42},"w":{full_w-60},"h":56,"text_font":28,"options":["Up","Pause","Down"],"one_check":0,"radius":12}}')
+                else:
+                    val = st_ent.state if st_ent and st_ent.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, "") else "--"
+                    lines.append(f'{{"page":{p},"obj":"btn","id":{base+2},"x":{x + max(20,(w-88)//2)},"y":{y+40},"w":88,"h":64,"text":"{val}","text_font":20,"toggle":false,"bg_opa":0,"border_width":0,"radius":0}}')
+
+        # Emit option pages after main pages
+        def _emit_option_pages():
+            for spec in option_specs:
+                page_id = spec["page_id"]
+                origin = spec["origin_page"]
+                entity = spec["entity"]
+                friendly = spec["friendly_name"]
+                opt_type = spec["type"]
+                lines.append(f'{{"page":{page_id},"id":0,"obj":"page","prev":{origin},"next":{origin}}}')
+                lines.append(f'{{"page":{page_id},"obj":"obj","id":10,"x":0,"y":0,"w":480,"h":480,"bg_color":"#0B1220","bg_opa":255,"click":false}}')
+                lines.append(f'{{"page":{page_id},"obj":"label","id":11,"x":24,"y":24,"w":432,"h":48,"text":"{friendly}","text_font":36,"align":"center","text_color":"#E5E7EB","bg_opa":0}}')
+                lines.append(f'{{"page":{page_id},"obj":"btn","id":190,"x":360,"y":24,"w":96,"h":48,"text":"Close","text_font":24,"radius":12,"bg_color":"#1F2937","text_color":"#FFFFFF","border_width":0}}')
+
+                if opt_type == "fan":
+                    lines.append(f'{{"page":{page_id},"obj":"label","id":40,"x":24,"y":96,"w":432,"h":36,"text":"--","text_font":28,"align":"center","text_color":"#9CA3AF","bg_opa":0}}')
+                    lines.append(f'{{"page":{page_id},"obj":"btnmatrix","id":60,"x":72,"y":168,"w":336,"h":144,"text_font":32,"options":["Off","Low","Med","High"],"toggle":1,"one_check":1,"val":0,"radius":16}}')
+                elif opt_type == "light_color":
+                    lines.append(f'{{"page":{page_id},"obj":"btn","id":40,"x":168,"y":108,"w":144,"h":72,"text":"Power","text_font":30,"toggle":1,"radius":14,"bg_color":"#1E293B","bg_opa":255,"text_color":"#FFFFFF","border_width":0}}')
+                    colors = [
+                        ("#FFFFFF", "White"),
+                        ("#FF0000", "Red"),
+                        ("#00FF00", "Green"),
+                        ("#0000FF", "Blue"),
+                        ("#FDE68A", "Warm"),
+                        ("#D0E1FF", "Cool"),
+                    ]
+                    btn_id = 80
+                    start_x = 72
+                    start_y = 216
+                    btn_w = 96
+                    btn_h = 96
+                    gap = 24
+                    for idx, (hexcol, label_text) in enumerate(colors):
+                        cx = start_x + (idx % 3) * (btn_w + gap)
+                        cy = start_y + (idx // 3) * (btn_h + 40)
+                        lines.append(f'{{"page":{page_id},"obj":"btn","id":{btn_id},"x":{cx},"y":{cy},"w":{btn_w},"h":{btn_h},"radius":16,"bg_color":"{hexcol}","text":"{label_text}","text_font":22,"bg_grad_dir":"none","border_width":0}}')
+                        btn_id += 1
+
+        _emit_option_pages()
+
         # Write file to config/dash480_exports
         base = hass.config.path("dash480_exports")
         os.makedirs(base, exist_ok=True)
