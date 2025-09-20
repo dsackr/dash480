@@ -285,7 +285,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         for line in lines:
             await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", line)
 
-    async def _publish_page_num(p: int, pe, ctrl_map: dict, sensor_map: dict, ent_toggle_map: dict, ent_matrix_map: dict) -> None:
+    async def _publish_page_num(
+        p: int,
+        pe,
+        ctrl_map: dict,
+        sensor_map: dict,
+        ent_toggle_map: dict,
+        ent_matrix_map: dict,
+        matrix_map: dict,
+        color_btn_map: dict,
+    ) -> None:
         # Compute prev/next based on current configured pages
         all_entries = hass.config_entries.async_entries(DOMAIN)
         page_entries = [e for e in all_entries if e.data.get("role") == "page" and e.data.get("panel_entry_id") == entry.entry_id]
@@ -310,8 +319,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         ]:
             await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", line)
         hass.data[DOMAIN][entry.entry_id].setdefault("popup_overlay_targets", {})[p] = [("b",193),("o",194),("l",195),("m",196),("b",197)]
-        hass.data[DOMAIN][entry.entry_id].setdefault("popup_map", {})[f"p{p}b193"] = {"type": "close_popup", "page": p}
-        hass.data[DOMAIN][entry.entry_id][f"p{p}b197"] = {"type": "close_popup", "page": p}
+        popup_map = hass.data[DOMAIN][entry.entry_id].setdefault("popup_map", {})
+        popup_map[f"p{p}b193"] = {"type": "close_popup", "page": p}
+        popup_map[f"p{p}b197"] = {"type": "close_popup", "page": p}
         # Draw tiles (reuse logic in _publish_all path)
         # Geometry for 3 columns x 2 rows (maximized height)
         def cell_xy(rc: int, cc: int) -> tuple[int, int]:
@@ -385,10 +395,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         ("#D0E1FF", {"color_temp_kelvin":6500}),
                     ]
                     bid = base3 + 4
-                    cmap = hass.data[DOMAIN][entry.entry_id].setdefault("color_btn_map", {})
                     for hexcol, payload in color_defs:
                         await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btn","id":{bid},"x":{cx},"y":{cy},"w":{chip},"h":{chip},"radius":6,"bg_color":"{hexcol}","bg_grad_dir":"none","border_width":0}}')
-                        cmap[f"p{p}b{bid}"] = {"entity": ent, "payload": payload, "main_btn": base3+2}
+                        color_btn_map[f"p{p}b{bid}"] = {"entity": ent, "payload": payload, "main_btn": base3+2}
                         cy += chip + csp; bid += 1
                 elif domain == "cover" and layout == "shades_row":
                     # Shades spanning full row (3 columns)
@@ -455,7 +464,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         color_btn_map: dict[str, dict] = {}
         for pe in page_entries:
             p = int(pe.data.get("page_order", 99))
-            await _publish_page_num(p, pe, ctrl_map, sensor_map, ent_toggle_map, ent_matrix_map)
+            await _publish_page_num(
+                p,
+                pe,
+                ctrl_map,
+                sensor_map,
+                ent_toggle_map,
+                ent_matrix_map,
+                matrix_map,
+                color_btn_map,
+            )
         hass.data[DOMAIN][entry.entry_id]["ctrl_map"] = ctrl_map
         hass.data[DOMAIN][entry.entry_id]["sensor_map"] = sensor_map
         hass.data[DOMAIN][entry.entry_id]["matrix_map"] = matrix_map
