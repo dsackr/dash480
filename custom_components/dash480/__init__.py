@@ -624,9 +624,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 mi = {"type": "cover_cmd", "entity": ent}
                 matrix_map[f"p{p}m{mid}"] = mi
                 ent_matrix_map.setdefault(ent, []).append((p, mid, mi))
-                # Always map main button on/off unless the entity uses a dedicated options page
-                if option_spec is None:
-                    ctrl_map[f"p{p}b{base3+2}"] = ent
+                # Always map main button on/off
+                ctrl_map[f"p{p}b{base3+2}"] = ent
             else:
                 val = st_ent.state if st_ent and st_ent.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, "") else "--"
                 await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btn","id":{base3+2},"x":{bx},"y":{by},"w":88,"h":64,"text":"{val}","text_font":20,"toggle":false,"bg_opa":0,"border_width":0,"radius":0}}')
