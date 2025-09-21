@@ -573,7 +573,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     await mqtt.async_publish(
                         hass,
                         f"hasp/{node_name}/command/jsonl",
-                        f'{{"page":{p},"obj":"label","id":{status_id},"x":{x+8},"y":{y+h-36},"w":{w-16},"h":28,"text":"Tap for speed","text_font":20,"align":"center","text_color":"#9CA3AF","bg_opa":0}}',
+                        f'{{"page":{p},"obj":"label","id":{status_id},"x":{x+8},"y":{y+h-36},"w":{w-16},"h":28,"text":"Tap for speed","text_font":20,"align":"center","text_color":"#9CA3AF","bg_opa":0,"click":false}}',
                     )
                     fan_status_map.setdefault(ent, []).append((p, ('l', status_id)))
                 elif is_light and has_color:
@@ -592,7 +592,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     await mqtt.async_publish(
                         hass,
                         f"hasp/{node_name}/command/jsonl",
-                        f'{{"page":{p},"obj":"label","id":{hint_id},"x":{x+8},"y":{y+h-36},"w":{w-16},"h":28,"text":"Tap for color","text_font":20,"align":"center","text_color":"#9CA3AF","bg_opa":0}}',
+                        f'{{"page":{p},"obj":"label","id":{hint_id},"x":{x+8},"y":{y+h-36},"w":{w-16},"h":28,"text":"Tap for color","text_font":20,"align":"center","text_color":"#9CA3AF","bg_opa":0,"click":false}}',
                     )
             elif domain == "cover" and layout == "shades_row":
                 # Shades spanning full row (3 columns)
