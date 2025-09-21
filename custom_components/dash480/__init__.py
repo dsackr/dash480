@@ -248,7 +248,7 @@ async def async_setup(hass: HomeAssistant, config):
                     icon = "\\uE4DC" if domain == "fan" else "\\uE425"
                     lines.append(f'{{"page":{p},"obj":"btn","id":{base+2},"x":{x + max(20,(w-96)//2)},"y":{y+36},"w":96,"h":72,"text":"{icon}","text_font":72,"toggle":true,"radius":14,"bg_color":"#1E293B","bg_opa":255,"text_color":"#FFFFFF","border_width":0}}')
                     if domain == "fan":
-                        lines.append(f'{{"page":{p},"obj":"label","id":{base+3},"x":{x+8},"y":{y+h-36},"w":{w-16},"h":28,"text":"Tap for speed","text_font":20,"align":"center","text_color":"#9CA3AF","bg_opa":0}}')
+                        lines.append(f'{{"page":{p},"obj":"label","id":{base+3},"x":{x+8},"y":{y+h-36},"w":{w-16},"h":28,"text":"Tap for speed","text_font":20,"align":"center","text_color":"#9CA3AF","bg_opa":0,"click":false}}')
                         option_specs.append({
                             "entity": ent,
                             "type": "fan",
@@ -262,7 +262,7 @@ async def async_setup(hass: HomeAssistant, config):
                         mode_str = ",".join(modes).lower()
                         has_color = any(m in mode_str for m in ("hs", "rgb", "rgbw", "rgbww"))
                         if has_color:
-                            lines.append(f'{{"page":{p},"obj":"label","id":{base+3},"x":{x+8},"y":{y+h-36},"w":{w-16},"h":28,"text":"Tap for color","text_font":20,"align":"center","text_color":"#9CA3AF","bg_opa":0}}')
+                            lines.append(f'{{"page":{p},"obj":"label","id":{base+3},"x":{x+8},"y":{y+h-36},"w":{w-16},"h":28,"text":"Tap for color","text_font":20,"align":"center","text_color":"#9CA3AF","bg_opa":0,"click":false}}')
                             option_specs.append({
                                 "entity": ent,
                                 "type": "light_color",
@@ -951,8 +951,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass.async_create_task(
                 mqtt.async_publish(
                     hass,
-                    f"hasp/{node_name}/command/json",
-                    json.dumps({"page": page_id}),
+                    f"hasp/{node_name}/command/page",
+                    str(page_id),
                 )
             )
 
