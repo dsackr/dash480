@@ -559,13 +559,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 if is_fan:
                     # Reserve option page for fan speed/percentage controls
                     opt_page = alloc_option_page()
+                    trigger_btn_id = base3 + 4
                     option_spec = {
                         "entity": ent,
                         "type": "fan",
                         "origin_page": p,
                         "page_id": opt_page,
                         "friendly_name": label,
-                        "trigger_topic": f"p{p}b{base3+2}",
+                        "trigger_topic": f"p{p}b{trigger_btn_id}",
                     }
                     option_specs.append(option_spec)
                     option_open_map[option_spec["trigger_topic"]] = option_spec
@@ -576,6 +577,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         f'{{"page":{p},"obj":"label","id":{status_id},"x":{x+8},"y":{y+h-36},"w":{w-16},"h":28,"text":"Tap for speed","text_font":20,"align":"center","text_color":"#9CA3AF","bg_opa":0,"click":false}}',
                     )
                     fan_status_map.setdefault(ent, []).append((p, ('l', status_id)))
+                    await mqtt.async_publish(
+                        hass,
+                        f"hasp/{node_name}/command/jsonl",
+                        f'{{"page":{p},"obj":"btn","id":{trigger_btn_id},"x":{x+8},"y":{y+h-36},"w":{w-16},"h":28,"text":"","toggle":0,"radius":6,"bg_opa":0,"border_width":0}}',
+                    )
                 elif is_light and has_color:
                     opt_page = alloc_option_page()
                     option_spec = {
@@ -584,7 +590,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         "origin_page": p,
                         "page_id": opt_page,
                         "friendly_name": label,
-                        "trigger_topic": f"p{p}b{base3+2}",
+                        "trigger_topic": f"p{p}b{base3+4}",
                     }
                     option_specs.append(option_spec)
                     option_open_map[option_spec["trigger_topic"]] = option_spec
@@ -593,6 +599,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         hass,
                         f"hasp/{node_name}/command/jsonl",
                         f'{{"page":{p},"obj":"label","id":{hint_id},"x":{x+8},"y":{y+h-36},"w":{w-16},"h":28,"text":"Tap for color","text_font":20,"align":"center","text_color":"#9CA3AF","bg_opa":0,"click":false}}',
+                    )
+                    await mqtt.async_publish(
+                        hass,
+                        f"hasp/{node_name}/command/jsonl",
+                        f'{{"page":{p},"obj":"btn","id":{base3+4},"x":{x+8},"y":{y+h-36},"w":{w-16},"h":28,"text":"","toggle":0,"radius":6,"bg_opa":0,"border_width":0}}',
                     )
             elif domain == "cover" and layout == "shades_row":
                 # Shades spanning full row (3 columns)
