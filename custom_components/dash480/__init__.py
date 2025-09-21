@@ -249,13 +249,14 @@ async def async_setup(hass: HomeAssistant, config):
                     lines.append(f'{{"page":{p},"obj":"btn","id":{base+2},"x":{x + max(20,(w-96)//2)},"y":{y+36},"w":96,"h":72,"text":"{icon}","text_font":72,"toggle":true,"radius":14,"bg_color":"#1E293B","bg_opa":255,"text_color":"#FFFFFF","border_width":0}}')
                     if domain == "fan":
                         lines.append(f'{{"page":{p},"obj":"label","id":{base+3},"x":{x+8},"y":{y+h-36},"w":{w-16},"h":28,"text":"Tap for speed","text_font":20,"align":"center","text_color":"#9CA3AF","bg_opa":0,"click":false}}')
+                        lines.append(f'{{"page":{p},"obj":"btn","id":{base+4},"x":{x+8},"y":{y+h-36},"w":{w-16},"h":28,"text":"","toggle":0,"radius":6,"bg_opa":0,"border_width":0}}')
                         option_specs.append({
                             "entity": ent,
                             "type": "fan",
                             "origin_page": p,
                             "page_id": alloc_option_page(),
                             "friendly_name": label,
-                            "trigger_topic": f"p{p}b{base+2}",
+                            "trigger_topic": f"p{p}b{base+4}",
                         })
                     elif domain == "light" and st_ent and st_ent.attributes.get("supported_color_modes"):
                         modes = st_ent.attributes.get("supported_color_modes", [])
@@ -263,13 +264,14 @@ async def async_setup(hass: HomeAssistant, config):
                         has_color = any(m in mode_str for m in ("hs", "rgb", "rgbw", "rgbww"))
                         if has_color:
                             lines.append(f'{{"page":{p},"obj":"label","id":{base+3},"x":{x+8},"y":{y+h-36},"w":{w-16},"h":28,"text":"Tap for color","text_font":20,"align":"center","text_color":"#9CA3AF","bg_opa":0,"click":false}}')
+                            lines.append(f'{{"page":{p},"obj":"btn","id":{base+4},"x":{x+8},"y":{y+h-36},"w":{w-16},"h":28,"text":"","toggle":0,"radius":6,"bg_opa":0,"border_width":0}}')
                             option_specs.append({
                                 "entity": ent,
                                 "type": "light_color",
                                 "origin_page": p,
                                 "page_id": alloc_option_page(),
                                 "friendly_name": label,
-                                "trigger_topic": f"p{p}b{base+2}",
+                                "trigger_topic": f"p{p}b{base+4}",
                             })
                 elif domain == "sensor":
                     val = st_ent.state if st_ent and st_ent.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, "") else "--"
