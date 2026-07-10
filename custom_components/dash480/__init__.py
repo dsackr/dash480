@@ -8,45 +8,20 @@ from homeassistant.components import mqtt
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback, ServiceCall
 from homeassistant.helpers.event import async_track_state_change_event
-from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 import voluptuous as vol
 
 from .const import DOMAIN
+from .layout import (
+    build_option_page,
+    display_state,
+    home_layout_objects,
+    option_page_allocator,
+    resolve_layout,
+    render_page,
+    ring_neighbors,
+)
 
 _LOGGER = logging.getLogger(__name__)
-
-# 3x3 grid tile layout helpers
-# Each layout maps to a list of tile specs with:
-# - row, col: 0-based grid position
-# - rs, cs: row-span and col-span (defaults 1)
-# - special: optional (e.g., "clock")
-LAYOUT_TEMPLATES: dict[str, list[dict]] = {
-    # 6 tiles (3x2)
-    "grid_3x2": [
-        {"row": 0, "col": 0}, {"row": 0, "col": 1}, {"row": 0, "col": 2},
-        {"row": 1, "col": 0}, {"row": 1, "col": 1}, {"row": 1, "col": 2},
-    ],
-    # 9 tiles of size 1x1 (legacy)
-    "grid_3x3": [
-        {"row": 0, "col": 0}, {"row": 0, "col": 1}, {"row": 0, "col": 2},
-        {"row": 1, "col": 0}, {"row": 1, "col": 1}, {"row": 1, "col": 2},
-        {"row": 2, "col": 0}, {"row": 2, "col": 1}, {"row": 2, "col": 2},
-    ],
-    # Top row is a full-width special clock tile; remaining 6 are 1x1
-    "clock_top": [
-        {"row": 0, "col": 0, "cs": 3, "rs": 1, "special": "clock"},
-        {"row": 1, "col": 0}, {"row": 1, "col": 1}, {"row": 1, "col": 2},
-        {"row": 2, "col": 0}, {"row": 2, "col": 1}, {"row": 2, "col": 2},
-    ],
-    "shades_row": [
-        {"row": 0, "col": 0}, {"row": 0, "col": 1}, {"row": 0, "col": 2},
-        {"row": 1, "col": 0}, {"row": 1, "col": 1}, {"row": 1, "col": 2},
-        {"row": 2, "col": 0, "cs": 3, "rs": 1, "special": "shades"},
-    ],
-}
-
-def _tile_specs_for_layout(layout: str) -> list[dict]:
-    return LAYOUT_TEMPLATES.get(layout or "", LAYOUT_TEMPLATES["grid_3x3"]).copy()
 
 # Top-level (component) setup: register services once and route by entry_id
 async def async_setup(hass: HomeAssistant, config):
@@ -122,7 +97,12 @@ async def async_setup(hass: HomeAssistant, config):
     hass.services.async_register(DOMAIN, "set_temp_entity", svc_set_temp_entity)
 
     async def svc_dump_layout(call):
-        """Build the full JSONL layout and dump to a file (no publish)."""
+        """Build the full JSONL layout and dump to a file (no publish).
+
+        Renders through the same layout.render_page/build_option_page used by
+        the live publisher, so this file is an accurate preview of what gets
+        pushed to the device.
+        """
         eid = await _pick_entry_id(call)
         if not eid:
             return
@@ -133,192 +113,41 @@ async def async_setup(hass: HomeAssistant, config):
         node_name = entry.data.get("node_name")
         home_title = entry.options.get("home_title", node_name)
         temp_entity = entry.options.get("temp_entity", "")
-        # Header/footer
+
         lines: list[str] = []
-        def _home_lines(title: str, temp_text: str) -> list[str]:
-            return _home_layout_lines(node_name, title, temp_text)
-        st = hass.states.get(temp_entity) if temp_entity else None
-        tval = "--"
-        if st and st.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, ""):
-            tval = str(st.state)
-        lines.extend(_home_lines(home_title, tval))
-        # Pages
+        tval = display_state(hass.states.get(temp_entity) if temp_entity else None)
+        lines.extend(json.dumps(obj) for obj in home_layout_objects(node_name, home_title, tval))
+
         all_entries = hass.config_entries.async_entries(DOMAIN)
         page_entries = [e for e in all_entries if e.data.get("role") == "page" and e.data.get("panel_entry_id") == eid]
         page_entries.sort(key=lambda e: int(e.data.get("page_order", 99)))
         page_numbers = [int(e.data.get("page_order", 99)) for e in page_entries]
         pages_ring = [1] + page_numbers
         if page_numbers:
-            prev_home = page_numbers[-1]
-            next_home = page_numbers[0]
-            lines.append(f'{{"page":1,"id":0,"obj":"page","prev":{prev_home},"next":{next_home}}}')
-
-        def pprev(p):
-            idx = pages_ring.index(p)
-            return pages_ring[(idx - 1) % len(pages_ring)]
-
-        def pnext(p):
-            idx = pages_ring.index(p)
-            return pages_ring[(idx + 1) % len(pages_ring)]
+            prev_home, next_home = ring_neighbors(pages_ring, 1)
+            lines.append(json.dumps({"page": 1, "id": 0, "obj": "page", "prev": prev_home, "next": next_home}))
 
         option_specs: list[dict] = []
-        next_option_page = 50
-
-        def alloc_option_page() -> int:
-            nonlocal next_option_page
-            pid = next_option_page
-            next_option_page += 1
-            return pid
+        alloc_option_page = option_page_allocator(50)
 
         for pe in page_entries:
             p = int(pe.data.get("page_order", 99))
-            lines.append(f'{{"page":{p},"id":0,"obj":"page","prev":{pprev(p)},"next":{pnext(p)}}}')
-            lines.append(f'{{"page":{p},"obj":"obj","id":80,"x":0,"y":0,"w":480,"h":480,"bg_color":"#0B1220","bg_opa":255,"click":false}}')
+            prev_p, next_p = ring_neighbors(pages_ring, p)
+            lines.append(json.dumps({"page": p, "id": 0, "obj": "page", "prev": prev_p, "next": next_p}))
+            lines.append(json.dumps({"page": p, "obj": "obj", "id": 80, "x": 0, "y": 0, "w": 480, "h": 480,
+                                      "bg_color": "#0B1220", "bg_opa": 255, "click": False}))
 
-            layout = pe.options.get("layout")
             slot_defs = [(f"s{i}", pe.options.get(f"s{i}", "")) for i in range(1, 13)]
-            if layout != "shades_row" and any(ent and ent.split(".")[0] == "cover" for _, ent in slot_defs):
-                layout = "shades_row"
-            if not layout:
-                layout = "grid_3x2"
-            tiles = _tile_specs_for_layout(layout)
+            icon_overrides = {f"s{i}": pe.options.get(f"s{i}_icon") for i in range(1, 13)}
+            page_layout = resolve_layout(pe.options.get("layout"), slot_defs)
 
-            filled_slots = [(key, ent) for key, ent in slot_defs if ent]
-            assignments: list[tuple[dict, tuple[str, str] | None]] = []
-            if layout == "shades_row":
-                cover_queue = [(k, e) for (k, e) in filled_slots if e.split(".")[0] == "cover"]
-                other_queue = [(k, e) for (k, e) in filled_slots if e.split(".")[0] != "cover"]
-                for spec in tiles:
-                    if spec.get("special") == "shades":
-                        slot = cover_queue.pop(0) if cover_queue else (other_queue.pop(0) if other_queue else None)
-                    else:
-                        slot = other_queue.pop(0) if other_queue else (cover_queue.pop(0) if cover_queue else None)
-                    assignments.append((spec, slot))
-            else:
-                queue = filled_slots.copy()
-                for spec in tiles:
-                    slot = queue.pop(0) if queue else None
-                    assignments.append((spec, slot))
+            render = render_page(p, page_layout, slot_defs, icon_overrides, hass.states.get, alloc_option_page)
+            lines.extend(json.dumps(obj) for obj in render.objects)
+            option_specs.extend(render.option_specs)
 
-            render_index = 1
-            base_x = 24
-            base_y = 120
-            col_step = 128 + 24
-            row_step = 120 + 20
-
-            def cell_xy(row: int, col: int) -> tuple[int, int]:
-                return (base_x + col * col_step, base_y + row * row_step)
-
-            def cell_wh(rs: int, cs: int) -> tuple[int, int]:
-                width = 128 * cs + 24 * (cs - 1)
-                height = (120 * rs) + 20 * (rs - 1)
-                return width, height
-            for spec, slot in assignments:
-                if not slot:
-                    continue
-                rs = int(spec.get("rs", 1))
-                cs = int(spec.get("cs", 1))
-                row = int(spec.get("row", 0))
-                col = int(spec.get("col", 0))
-                x, y = cell_xy(row, col)
-                w, h = cell_wh(rs, cs)
-                if spec.get("special") == "clock":
-                    lines.append(f'{{"page":{p},"obj":"label","id":70,"x":{x},"y":{y+4},"w":{w},"h":{h-8},"text":"00:00","template":"%H:%M","text_font":96,"align":"center","text_color":"#E5E7EB","bg_opa":0}}')
-                    continue
-                key, ent = slot
-                slot_digit = min(render_index, 9)
-                base = slot_digit * 10
-                render_index += 1
-                st_ent = hass.states.get(ent)
-                label = st_ent.attributes.get("friendly_name", ent) if st_ent else ent
-                special = spec.get("special")
-                if special == "shades":
-                    full_x = cell_xy(row, 0)[0]
-                    full_w = cell_wh(1, 3)[0]
-                    full_y = y + (h - 88) // 2
-                    lines.append(f'{{"page":{p},"obj":"obj","id":{base+5},"x":{full_x},"y":{full_y},"w":{full_w},"h":88,"radius":18,"bg_color":"#0B1220"}}')
-                    lines.append(f'{{"page":{p},"obj":"label","id":{base+6},"x":{full_x+18},"y":{full_y+12},"w":{full_w-36},"h":24,"text":"{label}","text_font":20,"text_color":"#9CA3AF","bg_opa":0}}')
-                    lines.append(f'{{"page":{p},"obj":"btnmatrix","id":{base+7},"x":{full_x+30},"y":{full_y+42},"w":{full_w-60},"h":56,"text_font":28,"options":["Up","Pause","Down"],"one_check":0,"radius":12}}')
-                    continue
-
-                lines.append(f'{{"page":{p},"obj":"obj","id":{base+1},"x":{x},"y":{y},"w":{w},"h":{h},"radius":14,"bg_color":"#1E293B","bg_opa":255,"click":false}}')
-                lines.append(f'{{"page":{p},"obj":"label","id":{base},"x":{x+8},"y":{y+6},"w":{w-16},"h":24,"text":"{label}","text_font":18,"text_color":"#9CA3AF","bg_opa":0}}')
-                domain = ent.split(".")[0]
-                if domain in ("switch", "light", "fan"):
-                    icon = "\\uE4DC" if domain == "fan" else "\\uE425"
-                    lines.append(f'{{"page":{p},"obj":"btn","id":{base+2},"x":{x + max(20,(w-96)//2)},"y":{y+36},"w":96,"h":72,"text":"{icon}","text_font":72,"toggle":true,"radius":14,"bg_color":"#1E293B","bg_opa":255,"text_color":"#FFFFFF","border_width":0}}')
-                    if domain == "fan":
-                        lines.append(f'{{"page":{p},"obj":"label","id":{base+3},"x":{x+8},"y":{y+h-36},"w":{w-16},"h":28,"text":"Tap for speed","text_font":20,"align":"center","text_color":"#9CA3AF","bg_opa":0,"click":false}}')
-                        lines.append(f'{{"page":{p},"obj":"btn","id":{base+4},"x":{x+8},"y":{y+h-36},"w":{w-16},"h":28,"text":"","toggle":0,"radius":6,"bg_opa":0,"border_width":0}}')
-                        option_specs.append({
-                            "entity": ent,
-                            "type": "fan",
-                            "origin_page": p,
-                            "page_id": alloc_option_page(),
-                            "friendly_name": label,
-                            "trigger_topic": f"p{p}b{base+4}",
-                        })
-                    elif domain == "light" and st_ent and st_ent.attributes.get("supported_color_modes"):
-                        modes = st_ent.attributes.get("supported_color_modes", [])
-                        mode_str = ",".join(modes).lower()
-                        has_color = any(m in mode_str for m in ("hs", "rgb", "rgbw", "rgbww"))
-                        if has_color:
-                            lines.append(f'{{"page":{p},"obj":"label","id":{base+3},"x":{x+8},"y":{y+h-36},"w":{w-16},"h":28,"text":"Tap for color","text_font":20,"align":"center","text_color":"#9CA3AF","bg_opa":0,"click":false}}')
-                            lines.append(f'{{"page":{p},"obj":"btn","id":{base+4},"x":{x+8},"y":{y+h-36},"w":{w-16},"h":28,"text":"","toggle":0,"radius":6,"bg_opa":0,"border_width":0}}')
-                            option_specs.append({
-                                "entity": ent,
-                                "type": "light_color",
-                                "origin_page": p,
-                                "page_id": alloc_option_page(),
-                                "friendly_name": label,
-                                "trigger_topic": f"p{p}b{base+4}",
-                            })
-                elif domain == "sensor":
-                    val = st_ent.state if st_ent and st_ent.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, "") else "--"
-                    lines.append(f'{{"page":{p},"obj":"btn","id":{base+2},"x":{x + max(20,(w-88)//2)},"y":{y+40},"w":88,"h":64,"text":"{val}","text_font":20,"toggle":false,"bg_opa":0,"border_width":0,"radius":0}}')
-                else:
-                    val = st_ent.state if st_ent and st_ent.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, "") else "--"
-                    lines.append(f'{{"page":{p},"obj":"btn","id":{base+2},"x":{x + max(20,(w-88)//2)},"y":{y+40},"w":88,"h":64,"text":"{val}","text_font":20,"toggle":false,"bg_opa":0,"border_width":0,"radius":0}}')
-
-        # Emit option pages after main pages
-        def _emit_option_pages():
-            for spec in option_specs:
-                page_id = spec["page_id"]
-                origin = spec["origin_page"]
-                entity = spec["entity"]
-                friendly = spec["friendly_name"]
-                opt_type = spec["type"]
-                lines.append(f'{{"page":{page_id},"id":0,"obj":"page","prev":{origin},"next":{origin}}}')
-                lines.append(f'{{"page":{page_id},"obj":"obj","id":10,"x":0,"y":0,"w":480,"h":480,"bg_color":"#0B1220","bg_opa":255,"click":false}}')
-                lines.append(f'{{"page":{page_id},"obj":"label","id":11,"x":24,"y":24,"w":432,"h":48,"text":"{friendly}","text_font":36,"align":"center","text_color":"#E5E7EB","bg_opa":0}}')
-                lines.append(f'{{"page":{page_id},"obj":"btn","id":190,"x":360,"y":24,"w":96,"h":48,"text":"Close","text_font":24,"radius":12,"bg_color":"#1F2937","text_color":"#FFFFFF","border_width":0}}')
-
-                if opt_type == "fan":
-                    lines.append(f'{{"page":{page_id},"obj":"label","id":40,"x":24,"y":96,"w":432,"h":36,"text":"--","text_font":28,"align":"center","text_color":"#9CA3AF","bg_opa":0}}')
-                    lines.append(f'{{"page":{page_id},"obj":"btnmatrix","id":60,"x":72,"y":168,"w":336,"h":144,"text_font":32,"options":["Off","Low","Med","High"],"toggle":1,"one_check":1,"val":0,"radius":16}}')
-                elif opt_type == "light_color":
-                    lines.append(f'{{"page":{page_id},"obj":"btn","id":40,"x":168,"y":108,"w":144,"h":72,"text":"Power","text_font":30,"toggle":1,"radius":14,"bg_color":"#1E293B","bg_opa":255,"text_color":"#FFFFFF","border_width":0}}')
-                    colors = [
-                        ("#FFFFFF", "White"),
-                        ("#FF0000", "Red"),
-                        ("#00FF00", "Green"),
-                        ("#0000FF", "Blue"),
-                        ("#FDE68A", "Warm"),
-                        ("#D0E1FF", "Cool"),
-                    ]
-                    btn_id = 80
-                    start_x = 72
-                    start_y = 216
-                    btn_w = 96
-                    btn_h = 96
-                    gap = 24
-                    for idx, (hexcol, label_text) in enumerate(colors):
-                        cx = start_x + (idx % 3) * (btn_w + gap)
-                        cy = start_y + (idx // 3) * (btn_h + 40)
-                        lines.append(f'{{"page":{page_id},"obj":"btn","id":{btn_id},"x":{cx},"y":{cy},"w":{btn_w},"h":{btn_h},"radius":16,"bg_color":"{hexcol}","text":"{label_text}","text_font":22,"bg_grad_dir":"none","border_width":0}}')
-                        btn_id += 1
-
-        _emit_option_pages()
+        for spec in option_specs:
+            option_render = build_option_page(spec)
+            lines.extend(json.dumps(obj) for obj in option_render.objects)
 
         # Write file to config/dash480_exports
         base = hass.config.path("dash480_exports")
@@ -341,35 +170,12 @@ PLATFORMS = ["switch", "text", "number", "button", "select"]
 PLATFORMS_PAGE = ["text", "button", "select"]
 
 def _home_layout_lines(node_name: str, title: str, temp_text: str) -> list[str]:
-    """Build JSONL lines for header/footer and home page with 3 relays."""
-    lines: list[str] = []
-    # Ensure page 0 and 1 exist
-    lines.append('{"page":0,"id":0,"obj":"page"}')
-    # Define page 1 without prev/next; navigation is set later by publisher when pages are known
-    lines.append('{"page":1,"id":0,"obj":"page"}')
-    # Header (page 0)
-    lines.append('{"page":0,"id":10,"obj":"obj","x":0,"y":0,"w":480,"h":56,"bg_color":"#1F2937","bg_opa":255,"radius":0,"border_width":0,"bg_grad_dir":"none","outline_width":0,"shadow_width":0}')
-    # Header left: date (replaces small clock)
-    lines.append('{"page":0,"id":1,"obj":"label","x":12,"y":8,"w":120,"h":40,"text":"--","template":"%b %d","text_font":35,"align":"left","text_color":"#E5E7EB","bg_opa":0}')
-    # Center title (p0b2)
-    t = title.replace('"', '\\"')
-    lines.append(f'{{"page":0,"id":2,"obj":"btn","x":140,"y":8,"w":200,"h":40,"text":"{t}","text_font":35,"text_color":"#FFFFFF","bg_opa":0,"border_width":0,"radius":0,"outline_width":0,"shadow_width":0,"toggle":false}}')
-    # Right temp (p0b3)
-    tt = temp_text.replace('"', '\\"') if temp_text else "--"
-    lines.append(f'{{"page":0,"id":3,"obj":"btn","x":320,"y":8,"w":148,"h":40,"text":"{tt}","text_font":24,"align":"right","text_color":"#E5E7EB","bg_opa":0,"border_width":0,"radius":0,"outline_width":0,"shadow_width":0,"toggle":false}}')
-    # Footer navigation (page 0) — span full 480px (3x160)
-    lines.append('{"page":0,"id":90,"obj":"btn","action":{"down": "page prev"},"x":0,"y":430,"w":160,"h":50,"bg_color":"#2C3E50","text":"\\uE141","text_color":"#FFFFFF","radius":0,"border_side":0,"border_width":0,"bg_grad_dir":"none","outline_width":0,"shadow_width":0,"text_font":48}')
-    lines.append('{"page":0,"id":91,"obj":"btn","action":{"down": "page 1"},"x":160,"y":430,"w":160,"h":50,"bg_color":"#2C3E50","text":"\\uE2DC","text_color":"#FFFFFF","radius":0,"border_side":0,"border_width":0,"bg_grad_dir":"none","outline_width":0,"shadow_width":0,"text_font":48}')
-    lines.append('{"page":0,"id":92,"obj":"btn","action":{"down": "page next"},"x":320,"y":430,"w":160,"h":50,"bg_color":"#2C3E50","text":"\\uE142","text_color":"#FFFFFF","radius":0,"border_side":0,"border_width":0,"bg_grad_dir":"none","outline_width":0,"shadow_width":0,"text_font":48}')
-    # Home page background area (use ID within 100..199 range)
-    lines.append('{"page":1,"obj":"obj","id":180,"x":0,"y":0,"w":480,"h":480,"bg_color":"#0B1220","bg_opa":255,"click":false}')
-    # Large digital clock just below the header
-    lines.append('{"page":1,"obj":"label","id":100,"x":0,"y":72,"w":480,"h":96,"text":"00:00","template":"%H:%M","text_font":96,"align":"center","text_color":"#E5E7EB","bg_opa":0}')
-    # Three relay buttons within 100..199 range (112/122/132)
-    lines.append('{"page":1,"obj":"btn","id":112,"x":25,"y":300,"w":120,"h":60,"text":"Relay 1","text_font":26,"toggle":true,"groupid":1,"radius":8,"bg_color":"#374151","text_color":"#FFFFFF","border_width":0}')
-    lines.append('{"page":1,"obj":"btn","id":122,"x":175,"y":300,"w":120,"h":60,"text":"Relay 2","text_font":26,"toggle":true,"groupid":2,"radius":8,"bg_color":"#374151","text_color":"#FFFFFF","border_width":0}')
-    lines.append('{"page":1,"obj":"btn","id":132,"x":325,"y":300,"w":120,"h":60,"text":"Relay 3","text_font":26,"toggle":true,"groupid":3,"radius":8,"bg_color":"#374151","text_color":"#FFFFFF","border_width":0}')
-    return lines
+    """JSONL lines for header/footer and home page with 3 relays.
+
+    Thin wrapper so call sites don't need to change; the actual objects come
+    from layout.home_layout_objects (shared with dump_layout).
+    """
+    return [json.dumps(obj) for obj in home_layout_objects(node_name, title, temp_text)]
 
 
 async def async_get_options_flow(entry: ConfigEntry):
@@ -407,11 +213,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """Clear and push header/footer + home relays."""
         # Clear existing pages first
         await mqtt.async_publish(hass, f"hasp/{node_name}/command/clearpage", "all")
-        temp_text = ""
-        if temp_entity:
-            st = hass.states.get(temp_entity)
-            if st and st.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, ""):
-                temp_text = str(st.state)
+        temp_text = display_state(hass.states.get(temp_entity)) if temp_entity else ""
         lines = _home_layout_lines(node_name, home_title, temp_text)
         for line in lines:
             await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", line)
@@ -436,15 +238,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         page_entries.sort(key=lambda e: int(e.data.get("page_order", 99)))
         nums = [int(e.data.get("page_order", 99)) for e in page_entries]
         ring = [1] + nums
-        def pprev(pp):
-            i = ring.index(pp); return ring[(i-1) % len(ring)]
-        def pnext(pp):
-            i = ring.index(pp); return ring[(i+1) % len(ring)]
+        prev_p, next_p = ring_neighbors(ring, p)
         # Clear page and draw base
         await mqtt.async_publish(hass, f"hasp/{node_name}/command/clearpage", str(p))
-        await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"id":0,"obj":"page","prev":{pprev(p)},"next":{pnext(p)}}}')
-        await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":80,"x":0,"y":0,"w":480,"h":480,"bg_color":"#0B1220","bg_opa":255,"click":false}}')
-        # Prebuild hidden modal
+        await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl",
+                                  json.dumps({"page": p, "id": 0, "obj": "page", "prev": prev_p, "next": next_p}))
+        await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl",
+                                  json.dumps({"page": p, "obj": "obj", "id": 80, "x": 0, "y": 0, "w": 480, "h": 480,
+                                              "bg_color": "#0B1220", "bg_opa": 255, "click": False}))
+        # Prebuild hidden modal (legacy popup overlay bookkeeping — see
+        # popup_map / popup_overlay_targets handling in _state_event)
         for line in [
             f'{{"page":{p},"obj":"btn","id":193,"x":0,"y":0,"w":480,"h":480,"text":"","toggle":false,"bg_color":"#000000","bg_opa":160,"radius":0,"border_width":0,"hidden":1}}',
             f'{{"page":{p},"obj":"obj","id":194,"x":60,"y":120,"w":360,"h":240,"bg_color":"#1E293B","bg_opa":255,"radius":16,"border_width":0,"hidden":1}}',
@@ -457,181 +260,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         popup_map = hass.data[DOMAIN][entry.entry_id].setdefault("popup_map", {})
         popup_map[f"p{p}b193"] = {"type": "close_popup", "page": p}
         popup_map[f"p{p}b197"] = {"type": "close_popup", "page": p}
-        # Draw tiles (reuse logic in _publish_all path)
-        # Auto-select layout when unspecified so covers get full-width row controls
-        layout = pe.options.get("layout")
-        slots_all = [(f"s{i}", pe.options.get(f"s{i}", "")) for i in range(1, 13)]
-        if layout != "shades_row":
-            if any(ent and ent.split(".")[0] == "cover" for _, ent in slots_all):
-                layout = "shades_row"
-        if not layout:
-            layout = "grid_3x2"
-        tiles = _tile_specs_for_layout(layout)
-        # Pair layout slots with configured entities, preferring the shades row for covers
-        filled_slots = [(key, ent) for key, ent in slots_all if ent]
-        assignments: list[tuple[dict, tuple[str, str] | None]] = []
-        if layout == "shades_row":
-            cover_queue = [(k, e) for (k, e) in filled_slots if e.split(".")[0] == "cover"]
-            other_queue = [(k, e) for (k, e) in filled_slots if e.split(".")[0] != "cover"]
-            for spec in tiles:
-                if spec.get("special") == "shades":
-                    slot = cover_queue.pop(0) if cover_queue else (other_queue.pop(0) if other_queue else None)
-                else:
-                    slot = other_queue.pop(0) if other_queue else (cover_queue.pop(0) if cover_queue else None)
-                assignments.append((spec, slot))
-        else:
-            queue = filled_slots.copy()
-            for spec in tiles:
-                slot = queue.pop(0) if queue else None
-                assignments.append((spec, slot))
-        # Geometry for 3 columns x 2 rows (maximized height)
-        def cell_xy(rc: int, cc: int) -> tuple[int, int]:
-            base_x = 24; col_step = 128 + 24
-            base_y = 80
-            # content bottom before footer is y=430
-            avail = 430 - base_y
-            row_gap = 20
-            tile_h = (avail - row_gap) // 2
-            row_step = tile_h + row_gap
-            return (base_x + cc * col_step, base_y + rc * row_step)
-        def cell_wh(rs: int, cs: int) -> tuple[int, int]:
-            w = 128 * cs + 24 * (cs - 1)
-            h = (120 * rs) + 20 * (rs - 1)
-            return (w, h)
-        render_index = 1
-        for spec, slot in assignments:
-            if not slot:
-                continue
-            rs=int(spec.get("rs",1)); cs=int(spec.get("cs",1)); row=int(spec.get("row",0)); col=int(spec.get("col",0))
-            x,y = cell_xy(row,col); w,h = cell_wh(rs,cs)
-            if spec.get("special") == "clock":
-                await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"label","id":70,"x":{x},"y":{y+4},"w":{w},"h":{h-8},"text":"00:00","template":"%H:%M","text_font":96,"align":"center","text_color":"#E5E7EB","bg_opa":0}}')
-                continue
-            key, ent = slot
-            slot_digit = min(render_index,9); base3 = slot_digit*10
-            render_index += 1
-            st_ent = hass.states.get(ent); label = st_ent.attributes.get("friendly_name", ent) if st_ent else ent
-            special = spec.get("special")
-            if special == "shades":
-                full_x = cell_xy(row, 0)[0]
-                full_w = cell_wh(1, 3)[0]
-                full_y = y + (h - 88) // 2
-                await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":{base3+5},"x":{full_x},"y":{full_y},"w":{full_w},"h":88,"radius":18,"bg_color":"#0B1220"}}')
-                await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"label","id":{base3+6},"x":{full_x+18},"y":{full_y+12},"w":{full_w-36},"h":24,"text":"{label}","text_font":20,"text_color":"#9CA3AF","bg_opa":0}}')
-                mid = base3 + 7
-                await mqtt.async_publish(
-                    hass,
-                    f"hasp/{node_name}/command/jsonl",
-                    f'{{"page":{p},"obj":"btnmatrix","id":{mid},"x":{full_x+30},"y":{full_y+42},"w":{full_w-60},"h":56,"text_font":28,"options":["Up","Pause","Down"],"one_check":0,"radius":12}}',
-                )
-                mi = {"type": "cover_cmd", "entity": ent}
-                matrix_map[f"p{p}m{mid}"] = mi
-                ent_matrix_map.setdefault(ent, []).append((p, mid, mi))
-                continue
 
-            await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"obj","id":{base3+1},"x":{x},"y":{y},"w":{w},"h":{h},"radius":14,"bg_color":"#1E293B","bg_opa":255,"click":false}}')
-            await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"label","id":{base3},"x":{x+8},"y":{y+6},"w":{max(112,w-16)},"h":24,"text":"{label}","text_font":18,"text_color":"#9CA3AF","bg_opa":0}}')
-            # Place icon lower so it is easier to press and leave breathing room for the label
-            bx = x + max(20,(w-96)//2); by = y + 36
-            domain = ent.split(".")[0]
-            option_spec: dict | None = None
-            if domain in ("switch", "light", "fan"):
-                # Icon selection by slot option, default per domain
-                icon_code = pe.options.get(f"{key}_icon") or ("E210" if domain == "fan" else "E425")
-                try:
-                    int(icon_code, 16)
-                except Exception:
-                    icon_code = "E425"
-                icon = f"\\u{icon_code}"
-                await mqtt.async_publish(
-                    hass,
-                    f"hasp/{node_name}/command/jsonl",
-                    f'{{"page":{p},"obj":"btn","id":{base3+2},"x":{bx},"y":{by},"w":96,"h":72,"text":"{icon}","text_font":72,"toggle":1,"radius":14,"bg_color":"#1E293B","bg_opa":255,"text_color":"#FFFFFF","border_width":0}}',
-                )
-                ent_toggle_map.setdefault(ent, []).append((p, base3 + 2))
-                is_light = domain == "light"
-                is_fan = domain == "fan"
-                modes = st_ent.attributes.get("supported_color_modes", []) if st_ent else []
-                has_color = False
-                try:
-                    m = ",".join(modes).lower()
-                    has_color = ("hs" in m) or ("rgb" in m) or ("rgbw" in m) or ("rgbww" in m)
-                except Exception:
-                    pass
-                if is_fan:
-                    # Reserve option page for fan speed/percentage controls
-                    opt_page = alloc_option_page()
-                    trigger_btn_id = base3 + 4
-                    option_spec = {
-                        "entity": ent,
-                        "type": "fan",
-                        "origin_page": p,
-                        "page_id": opt_page,
-                        "friendly_name": label,
-                        "trigger_topic": f"p{p}b{trigger_btn_id}",
-                    }
-                    option_specs.append(option_spec)
-                    option_open_map[option_spec["trigger_topic"]] = option_spec
-                    status_id = base3 + 3
-                    await mqtt.async_publish(
-                        hass,
-                        f"hasp/{node_name}/command/jsonl",
-                        f'{{"page":{p},"obj":"label","id":{status_id},"x":{x+8},"y":{y+h-36},"w":{w-16},"h":28,"text":"Tap for speed","text_font":20,"align":"center","text_color":"#9CA3AF","bg_opa":0,"click":false}}',
-                    )
-                    fan_status_map.setdefault(ent, []).append((p, ('l', status_id)))
-                    await mqtt.async_publish(
-                        hass,
-                        f"hasp/{node_name}/command/jsonl",
-                        f'{{"page":{p},"obj":"btn","id":{trigger_btn_id},"x":{x+8},"y":{y+h-36},"w":{w-16},"h":28,"text":"","toggle":0,"radius":6,"bg_opa":0,"border_width":0}}',
-                    )
-                elif is_light and has_color:
-                    opt_page = alloc_option_page()
-                    option_spec = {
-                        "entity": ent,
-                        "type": "light_color",
-                        "origin_page": p,
-                        "page_id": opt_page,
-                        "friendly_name": label,
-                        "trigger_topic": f"p{p}b{base3+4}",
-                    }
-                    option_specs.append(option_spec)
-                    option_open_map[option_spec["trigger_topic"]] = option_spec
-                    hint_id = base3 + 3
-                    await mqtt.async_publish(
-                        hass,
-                        f"hasp/{node_name}/command/jsonl",
-                        f'{{"page":{p},"obj":"label","id":{hint_id},"x":{x+8},"y":{y+h-36},"w":{w-16},"h":28,"text":"Tap for color","text_font":20,"align":"center","text_color":"#9CA3AF","bg_opa":0,"click":false}}',
-                    )
-                    await mqtt.async_publish(
-                        hass,
-                        f"hasp/{node_name}/command/jsonl",
-                        f'{{"page":{p},"obj":"btn","id":{base3+4},"x":{x+8},"y":{y+h-36},"w":{w-16},"h":28,"text":"","toggle":0,"radius":6,"bg_opa":0,"border_width":0}}',
-                    )
-            elif domain == "cover" and layout == "shades_row":
-                # Shades spanning full row (3 columns)
-                full_x = cell_xy(row, 0)[0]
-                full_w = cell_wh(1, 3)[0]
-                full_y = y + (h - 88) // 2
-                # Background bar
-                await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{\"page\":{p},\"obj\":\"obj\",\"id\":{base3+5},\"x\":{full_x},\"y\":{full_y},\"w\":{full_w},\"h\":88,\"radius\":18,\"bg_color\":\"#0B1220\"}}')
-                # Label on left
-                await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{\"page\":{p},\"obj\":\"label\",\"id\":{base3+6},\"x\":{full_x+18},\"y\":{full_y+12},\"w\":{full_w-36},\"h\":24,\"text\":\"{label}\",\"text_font\":20,\"text_color\":\"#9CA3AF\",\"bg_opa\":0}}')
-                # Matrix centered under label
-                mid = base3 + 7
-                await mqtt.async_publish(
-                    hass,
-                    f"hasp/{node_name}/command/jsonl",
-                    f'{{\"page\":{p},\"obj\":\"btnmatrix\",\"id\":{mid},\"x\":{full_x+30},\"y\":{full_y+42},\"w\":{full_w-60},\"h\":56,\"text_font\":28,\"options\":[\"Up\",\"Pause\",\"Down\"],\"one_check\":0,\"radius\":12}}'
-                )
-                mi = {"type": "cover_cmd", "entity": ent}
-                matrix_map[f"p{p}m{mid}"] = mi
-                ent_matrix_map.setdefault(ent, []).append((p, mid, mi))
-                # Always map main button on/off
-                ctrl_map[f"p{p}b{base3+2}"] = ent
-            else:
-                val = st_ent.state if st_ent and st_ent.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, "") else "--"
-                await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", f'{{"page":{p},"obj":"btn","id":{base3+2},"x":{bx},"y":{by},"w":88,"h":64,"text":"{val}","text_font":20,"toggle":false,"bg_opa":0,"border_width":0,"radius":0}}')
-                sensor_map.setdefault(ent, []).append((p, base3+2))
+        # Draw tiles — single shared implementation (layout.render_page),
+        # also used by the dump_layout debug export, so the two can no
+        # longer drift out of sync.
+        slot_defs = [(f"s{i}", pe.options.get(f"s{i}", "")) for i in range(1, 13)]
+        icon_overrides = {f"s{i}": pe.options.get(f"s{i}_icon") for i in range(1, 13)}
+        page_layout = resolve_layout(pe.options.get("layout"), slot_defs)
+        render = render_page(p, page_layout, slot_defs, icon_overrides, hass.states.get, alloc_option_page)
+
+        for obj in render.objects:
+            await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", json.dumps(obj))
+
+        ctrl_map.update(render.ctrl_map)
+        matrix_map.update(render.matrix_map)
+        for ent, targets in render.sensor_map.items():
+            sensor_map.setdefault(ent, []).extend(targets)
+        for ent, targets in render.ent_toggle_map.items():
+            ent_toggle_map.setdefault(ent, []).extend(targets)
+        for ent, targets in render.ent_matrix_map.items():
+            ent_matrix_map.setdefault(ent, []).extend(targets)
+        for ent, targets in render.fan_status_map.items():
+            fan_status_map.setdefault(ent, []).extend(targets)
+        for option_spec in render.option_specs:
+            option_specs.append(option_spec)
+            option_open_map[option_spec["trigger_topic"]] = option_spec
 
     async def _publish_option_pages(
         option_specs: list,
@@ -644,102 +297,39 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         option_page_titles: dict,
         fan_status_map: dict,
     ) -> None:
+        # Visual chrome comes from the same layout.build_option_page used by
+        # dump_layout; only the interactive touch-routing maps are built here.
         for spec in option_specs:
             page_id = spec["page_id"]
             origin = spec["origin_page"]
             entity = spec["entity"]
-            friendly = spec["friendly_name"]
-            option_type = spec["type"]
-            option_page_titles[page_id] = f"{friendly} Options"
+            option_page_titles[page_id] = f"{spec['friendly_name']} Options"
 
             await mqtt.async_publish(hass, f"hasp/{node_name}/command/clearpage", str(page_id))
-            await mqtt.async_publish(
-                hass,
-                f"hasp/{node_name}/command/jsonl",
-                f'{{\"page\":{page_id},\"id\":0,\"obj\":\"page\",\"prev\":{origin},\"next\":{origin}}}'
-            )
-            await mqtt.async_publish(
-                hass,
-                f"hasp/{node_name}/command/jsonl",
-                f'{{\"page\":{page_id},\"obj\":\"obj\",\"id\":10,\"x\":0,\"y\":0,\"w\":480,\"h\":480,\"bg_color\":\"#0B1220\",\"bg_opa\":255,\"click\":false}}'
-            )
-            await mqtt.async_publish(
-                hass,
-                f"hasp/{node_name}/command/jsonl",
-                f'{{\"page\":{page_id},\"obj\":\"label\",\"id\":11,\"x\":24,\"y\":24,\"w\":432,\"h\":48,\"text\":\"{friendly}\",\"text_font\":36,\"align\":\"center\",\"text_color\":\"#E5E7EB\",\"bg_opa\":0}}'
-            )
+            option_render = build_option_page(spec)
+            for obj in option_render.objects:
+                await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", json.dumps(obj))
 
-            close_id = 190
-            await mqtt.async_publish(
-                hass,
-                f"hasp/{node_name}/command/jsonl",
-                f'{{\"page\":{page_id},\"obj\":\"btn\",\"id\":{close_id},\"x\":360,\"y\":24,\"w\":96,\"h\":48,\"text\":\"Close\",\"text_font\":24,\"radius\":12,\"bg_color\":\"#1F2937\",\"text_color\":\"#FFFFFF\",\"border_width\":0}}'
-            )
-            option_close_map[f"p{page_id}b{close_id}"] = {"return_page": origin, "entity": entity}
+            option_close_map[f"p{page_id}b{option_render.close_button_id}"] = {"return_page": origin, "entity": entity}
 
-            if option_type == "fan":
-                status_label_id = 40
-                await mqtt.async_publish(
-                    hass,
-                    f"hasp/{node_name}/command/jsonl",
-                    f'{{\"page\":{page_id},\"obj\":\"label\",\"id\":{status_label_id},\"x\":24,\"y\":96,\"w\":432,\"h\":36,\"text\":\"--\",\"text_font\":28,\"align\":\"center\",\"text_color\":\"#9CA3AF\",\"bg_opa\":0}}'
-                )
-                fan_status_map.setdefault(entity, []).append((page_id, ('l', status_label_id)))
-
-                matrix_id = 60
-                await mqtt.async_publish(
-                    hass,
-                    f"hasp/{node_name}/command/jsonl",
-                    f'{{\"page\":{page_id},\"obj\":\"btnmatrix\",\"id\":{matrix_id},\"x\":72,\"y\":168,\"w\":336,\"h\":144,\"text_font\":32,\"options\":[\"Off\",\"Low\",\"Med\",\"High\"],\"toggle\":1,\"one_check\":1,\"val\":0,\"radius\":16}}'
-                )
+            if spec["type"] == "fan":
+                fan_status_map.setdefault(entity, []).append((page_id, ("l", option_render.fan_status_label_id)))
                 meta = {"type": "fan_select", "entity": entity}
-                matrix_map[f"p{page_id}m{matrix_id}"] = meta
-                ent_matrix_map.setdefault(entity, []).append((page_id, matrix_id, meta))
+                matrix_map[f"p{page_id}m{option_render.fan_matrix_id}"] = meta
+                ent_matrix_map.setdefault(entity, []).append((page_id, option_render.fan_matrix_id, meta))
 
-            elif option_type == "light_color":
-                power_btn_id = 40
-                await mqtt.async_publish(
-                    hass,
-                    f"hasp/{node_name}/command/jsonl",
-                    f'{{\"page\":{page_id},\"obj\":\"btn\",\"id\":{power_btn_id},\"x\":168,\"y\":108,\"w\":144,\"h\":72,\"text\":\"Power\",\"text_font\":30,\"toggle\":1,\"radius\":14,\"bg_color\":\"#1E293B\",\"bg_opa\":255,\"text_color\":\"#FFFFFF\",\"border_width\":0}}'
-                )
-                ctrl_map[f"p{page_id}b{power_btn_id}"] = entity
-                ent_toggle_map.setdefault(entity, []).append((page_id, power_btn_id))
-
-                colors = [
-                    ("#FFFFFF", {"rgb_color": [255, 255, 255]}, "White"),
-                    ("#FF0000", {"rgb_color": [255, 0, 0]}, "Red"),
-                    ("#00FF00", {"rgb_color": [0, 255, 0]}, "Green"),
-                    ("#0000FF", {"rgb_color": [0, 0, 255]}, "Blue"),
-                    ("#FDE68A", {"color_temp_kelvin": 2700}, "Warm"),
-                    ("#D0E1FF", {"color_temp_kelvin": 6500}, "Cool"),
-                ]
-                btn_id = 80
-                start_x = 72
-                start_y = 216
-                btn_w = 96
-                btn_h = 96
-                gap = 24
-                for idx, (hexcol, payload, label_text) in enumerate(colors):
-                    cx = start_x + (idx % 3) * (btn_w + gap)
-                    cy = start_y + (idx // 3) * (btn_h + 40)
-                    await mqtt.async_publish(
-                        hass,
-                        f"hasp/{node_name}/command/jsonl",
-                        f'{{\"page\":{page_id},\"obj\":\"btn\",\"id\":{btn_id},\"x\":{cx},\"y\":{cy},\"w\":{btn_w},\"h\":{btn_h},\"radius\":16,\"bg_color\":\"{hexcol}\",\"text\":\"{label_text}\",\"text_font\":22,\"bg_grad_dir\":\"none\",\"border_width\":0}}'
-                    )
-                    color_btn_map[f"p{page_id}b{btn_id}"] = {"entity": entity, "payload": payload, "main_btn": power_btn_id}
-                    btn_id += 1
+            elif spec["type"] == "light_color":
+                ctrl_map[f"p{page_id}b{option_render.power_button_id}"] = entity
+                ent_toggle_map.setdefault(entity, []).append((page_id, option_render.power_button_id))
+                for btn_id, _hexcol, payload in option_render.color_buttons:
+                    color_btn_map[f"p{page_id}b{btn_id}"] = {"entity": entity, "payload": payload, "main_btn": option_render.power_button_id}
 
     async def _publish_all() -> None:
         """Publish full layout based on config entities (pages, titles, slots)."""
         _LOGGER.info("Dash480: publishing all for node=%s", node_name)
         await mqtt.async_publish(hass, f"hasp/{node_name}/command/clearpage", "all")
         # Header/footer
-        st = hass.states.get(temp_entity) if temp_entity else None
-        tval = "--"
-        if st and st.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, ""):
-            tval = str(st.state)
+        tval = display_state(hass.states.get(temp_entity) if temp_entity else None)
         lines = _home_layout_lines(node_name, home_title, tval)
         for line in lines:
             await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", line)
@@ -752,19 +342,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         pages_ring = [1] + page_numbers
         # Update page 1 prev/next to wrap to first/last page if pages exist
         if page_numbers:
-            prev_home = page_numbers[-1]
-            next_home = page_numbers[0]
+            prev_home, next_home = ring_neighbors(pages_ring, 1)
             await mqtt.async_publish(
                 hass,
                 f"hasp/{node_name}/command/jsonl",
-                f'{{"page":1,"id":0,"obj":"page","prev":{prev_home},"next":{next_home}}}',
+                json.dumps({"page": 1, "id": 0, "obj": "page", "prev": prev_home, "next": next_home}),
             )
-        def pprev(p):
-            idx = pages_ring.index(p)
-            return pages_ring[(idx - 1) % len(pages_ring)]
-        def pnext(p):
-            idx = pages_ring.index(p)
-            return pages_ring[(idx + 1) % len(pages_ring)]
         # Draw each page
         ctrl_map: dict[str, str] = {}
         sensor_map: dict[str, list[tuple[int, int]]] = {}
@@ -775,13 +358,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         fan_status_map: dict[str, list[tuple[int, tuple[str, int]]]] = {}
         option_specs: list[dict] = []
         option_open_map: dict[str, dict] = {}
-        next_option_page = 50
-
-        def alloc_option_page():
-            nonlocal next_option_page
-            page_id = next_option_page
-            next_option_page += 1
-            return page_id
+        alloc_option_page = option_page_allocator(50)
         for pe in page_entries:
             p = int(pe.data.get("page_order", 99))
             await _publish_page_num(
@@ -830,27 +407,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 is_on = str(st.state).lower() == "on"
                 val = "1" if is_on else "0"
                 await mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}b{bid}.val", val)
-            # Update all matrices for this entity
-            for p, mid, meta in ent_matrix_map.get(entity_id, []):
-                if meta["type"] == "light_dim":
-                    bri = st.attributes.get("brightness")
-                    if isinstance(bri, int):
-                        pct = max(1, min(100, int(round(bri * 100 / 255))))
-                        idx = 0 if pct <= 25 else 1 if pct <= 50 else 2 if pct <= 75 else 3
-                        await mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}m{mid}.val", str(idx))
-                elif meta["type"] == "fan_preset":
-                    mode = (st.attributes.get("preset_mode") or "").strip()
-                    presets = meta.get("presets", [])
-                    if mode and presets:
-                        try:
-                            idx = presets.index(mode)
-                            await mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}m{mid}.val", str(idx))
-                        except ValueError:
-                            pass
-                elif meta["type"] == "fan_pct":
-                    pct = st.attributes.get("percentage") or 0
-                    idx = 0 if pct == 0 else 1 if pct <= 33 else 2 if pct <= 66 else 3
-                    await mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}m{mid}.val", str(idx))
             # Update color tint for color-capable lights (main button text_color)
             domain = entity_id.split(".")[0]
             if domain == "fan":
@@ -911,8 +467,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         for ent, targets in sensor_map.items():
             async def _make_cb(eid: str):
                 async def _cb(event):
-                    st = hass.states.get(eid)
-                    val = st.state if st and st.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, "") else "--"
+                    val = display_state(hass.states.get(eid))
                     for (pnum, bid) in sensor_map.get(eid, []):
                         await mqtt.async_publish(hass, f"hasp/{node_name}/command/p{pnum}b{bid}.text", val)
                 return _cb
@@ -1177,16 +732,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             m = hass.data[DOMAIN][entry.entry_id].get("matrix_map", {}).get(topic_tail)
             if m:
                 ent = m["entity"]
-                if m["type"] == "light_dim":
-                    # Deprecated: removed from layout
-                    pass
-                elif m["type"] == "fan_preset":
-                    # Deprecated: removed from layout
-                    pass
-                elif m["type"] == "fan_pct":
-                    # Deprecated: removed from layout
-                    pass
-                elif m["type"] == "fan_select":
+                if m["type"] == "fan_select":
                     pct_map = {0: 0, 1: 33, 2: 66, 3: 100}
                     pct = pct_map.get(int(val), 0)
                     if pct == 0:
@@ -1282,11 +828,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     async def _on_temp_change(event):
         if not temp_entity:
             return
-        st = hass.states.get(temp_entity)
-        val = "--"
-        if st and st.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, ""):
-            val = str(st.state)
-        await _publish_temp(val)
+        await _publish_temp(display_state(hass.states.get(temp_entity)))
 
     if temp_entity:
         unsub_temp = async_track_state_change_event(hass, [temp_entity], _on_temp_change)
@@ -1308,11 +850,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 unsub_new = async_track_state_change_event(hass, [temp_entity], _on_temp_change)
                 hass.data[DOMAIN][entry.entry_id]["unsub_temp"] = unsub_new
             # push current temp immediately
-            st = hass.states.get(temp_entity) if temp_entity else None
-            val = "--"
-            if st and st.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, ""):
-                val = str(st.state)
-            await _publish_temp(val)
+            await _publish_temp(display_state(hass.states.get(temp_entity) if temp_entity else None))
         # Update title immediately
         await mqtt.async_publish(hass, f"hasp/{node_name}/command/p0b2.text", home_title)
 
@@ -1359,11 +897,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             unsub_temp_prev()
             hass.data[DOMAIN][entry.entry_id]["unsub_temp"] = None
         # publish current value
-        val = "--"
-        st = hass.states.get(temp_entity) if temp_entity else None
-        if st and st.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE, None, ""):
-            val = str(st.state)
-        await _publish_temp(val)
+        await _publish_temp(display_state(hass.states.get(temp_entity) if temp_entity else None))
         # re-subscribe for future updates
         if temp_entity:
             unsub_temp_new = async_track_state_change_event(hass, [temp_entity], _on_temp_change)
