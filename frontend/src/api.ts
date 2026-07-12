@@ -38,10 +38,10 @@ export const updatePage = (
   hass: HomeAssistant,
   id: string,
   patch: Partial<Pick<VisualPage, "title" | "columns" | "rows" | "tiles">>,
-) => call<{ page: VisualPage }>(hass, { type: "dash480/pages/update", id, ...patch });
+) => call<{ page: VisualPage }>(hass, { type: "dash480/pages/update", page_id: id, ...patch });
 
 export const deletePage = (hass: HomeAssistant, id: string) =>
-  call<Record<string, never>>(hass, { type: "dash480/pages/delete", id });
+  call<Record<string, never>>(hass, { type: "dash480/pages/delete", page_id: id });
 
 export const publishPanel = (hass: HomeAssistant, panelEntryId: string) =>
   call<Record<string, never>>(hass, {

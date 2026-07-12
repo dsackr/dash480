@@ -613,7 +613,7 @@ const Wt = (s) => b(s, { type: "dash480/panels/list" }), qt = (s, t) => b(s, {
   title: e,
   columns: i,
   rows: r
-}), Zt = (s, t, e) => b(s, { type: "dash480/pages/update", id: t, ...e }), Jt = (s, t) => b(s, { type: "dash480/pages/delete", id: t }), Kt = (s, t) => b(s, {
+}), Zt = (s, t, e) => b(s, { type: "dash480/pages/update", page_id: t, ...e }), Jt = (s, t) => b(s, { type: "dash480/pages/delete", page_id: t }), Kt = (s, t) => b(s, {
   type: "dash480/pages/publish",
   panel_entry_id: t
 }), Xt = (s, t) => b(s, {

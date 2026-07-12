@@ -92,7 +92,7 @@ async def ws_create_page(hass: HomeAssistant, connection, msg: dict) -> None:
 @websocket_api.require_admin
 @websocket_api.websocket_command({
     vol.Required("type"): "dash480/pages/update",
-    vol.Required("id"): str,
+    vol.Required("page_id"): str,
     vol.Optional("title"): str,
     vol.Optional("columns"): vol.All(vol.Coerce(int), vol.Range(min=1, max=6)),
     vol.Optional("rows"): vol.All(vol.Coerce(int), vol.Range(min=1, max=6)),
@@ -102,8 +102,8 @@ async def ws_create_page(hass: HomeAssistant, connection, msg: dict) -> None:
 async def ws_update_page(hass: HomeAssistant, connection, msg: dict) -> None:
     store = async_get_store(hass)
     await store.async_load()
-    patch = {k: v for k, v in msg.items() if k not in ("type", "id")}
-    page = await store.async_update_page(msg["id"], patch)
+    patch = {k: v for k, v in msg.items() if k not in ("type", "id", "page_id")}
+    page = await store.async_update_page(msg["page_id"], patch)
     if page is None:
         connection.send_error(msg["id"], "not_found", "Unknown page id")
         return
@@ -113,13 +113,13 @@ async def ws_update_page(hass: HomeAssistant, connection, msg: dict) -> None:
 @websocket_api.require_admin
 @websocket_api.websocket_command({
     vol.Required("type"): "dash480/pages/delete",
-    vol.Required("id"): str,
+    vol.Required("page_id"): str,
 })
 @websocket_api.async_response
 async def ws_delete_page(hass: HomeAssistant, connection, msg: dict) -> None:
     store = async_get_store(hass)
     await store.async_load()
-    if not await store.async_delete_page(msg["id"]):
+    if not await store.async_delete_page(msg["page_id"]):
         connection.send_error(msg["id"], "not_found", "Unknown page id")
         return
     connection.send_result(msg["id"], {})
