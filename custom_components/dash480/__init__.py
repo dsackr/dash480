@@ -73,6 +73,22 @@ async def _async_register_panel(hass: HomeAssistant) -> None:
     output is committed to panel_dist/ — HACS installs never need Node.
     """
     dist_path = Path(__file__).parent / "panel_dist" / PANEL_MODULE_FILENAME
+    if not dist_path.is_file():
+        # StaticPathConfig doesn't validate the target exists — registration
+        # below will "succeed" either way, but every request for it will
+        # 404 until this file is actually on disk (e.g. an installer that
+        # didn't sync the panel_dist/ directory).
+        _LOGGER.error(
+            "Dash480: panel bundle missing at %s (size on disk: n/a) — the "
+            "sidebar panel will 404 until custom_components/dash480/panel_dist/%s "
+            "exists here. Directory listing of %s: %s",
+            dist_path,
+            PANEL_MODULE_FILENAME,
+            dist_path.parent,
+            sorted(p.name for p in dist_path.parent.iterdir()) if dist_path.parent.is_dir() else "<missing>",
+        )
+    else:
+        _LOGGER.info("Dash480: panel bundle found at %s (%d bytes)", dist_path, dist_path.stat().st_size)
     await hass.http.async_register_static_paths([
         StaticPathConfig(PANEL_STATIC_URL, str(dist_path), False)
     ])
