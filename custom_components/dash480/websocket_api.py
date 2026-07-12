@@ -16,7 +16,14 @@ from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
 from .layout import GridSpec
-from .pages_store import DEFAULT_COLUMNS, DEFAULT_ROWS, async_get_store, legacy_page_orders
+from .pages_store import (
+    DEFAULT_COLUMNS,
+    DEFAULT_ROWS,
+    MAX_PAGE_ORDER,
+    MIN_PAGE_ORDER,
+    async_get_store,
+    legacy_page_orders,
+)
 
 # Domains selectable for an "entity" tile in the visual builder — matches
 # select.py's ALLOWED_DOMAINS for the legacy per-slot picker (weather/gauge
@@ -59,6 +66,7 @@ async def ws_list_pages(hass: HomeAssistant, connection, msg: dict) -> None:
     vol.Required("title"): str,
     vol.Optional("columns", default=DEFAULT_COLUMNS): vol.All(vol.Coerce(int), vol.Range(min=1, max=6)),
     vol.Optional("rows", default=DEFAULT_ROWS): vol.All(vol.Coerce(int), vol.Range(min=1, max=6)),
+    vol.Optional("page_order"): vol.All(vol.Coerce(int), vol.Range(min=MIN_PAGE_ORDER, max=MAX_PAGE_ORDER)),
 })
 @websocket_api.async_response
 async def ws_create_page(hass: HomeAssistant, connection, msg: dict) -> None:
@@ -73,6 +81,7 @@ async def ws_create_page(hass: HomeAssistant, connection, msg: dict) -> None:
             title=msg["title"],
             columns=msg["columns"],
             rows=msg["rows"],
+            page_order=msg.get("page_order"),
         )
     except ValueError as err:
         connection.send_error(msg["id"], "no_free_page_order", str(err))

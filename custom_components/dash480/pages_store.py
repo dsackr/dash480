@@ -94,8 +94,13 @@ class VisualPagesStore:
     ) -> dict[str, Any]:
         if page_order is None:
             page_order = self.allocate_page_order(panel_entry_id)
-        if page_order is None:
-            raise ValueError(f"No free page_order (1..{MAX_PAGE_ORDER}) left for panel {panel_entry_id}")
+            if page_order is None:
+                raise ValueError(f"No free page_order (1..{MAX_PAGE_ORDER}) left for panel {panel_entry_id}")
+        else:
+            used = legacy_page_orders(self.hass, panel_entry_id)
+            used |= {int(p["page_order"]) for p in self.list_pages(panel_entry_id)}
+            if page_order in used:
+                raise ValueError(f"page_order {page_order} is already in use for panel {panel_entry_id}")
         page = {
             "id": uuid.uuid4().hex,
             "panel_entry_id": panel_entry_id,
