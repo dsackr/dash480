@@ -35,3 +35,14 @@ jobs:
           git tag "v${{ steps.bump.outputs.new_version }}"
           git push origin HEAD:main
           git push origin "v${{ steps.bump.outputs.new_version }}"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # A tag pushed with the default GITHUB_TOKEN does not trigger other
+          # workflows (GitHub's anti-recursion protection), so release.yml
+          # never fires for this tag — create the release directly here
+          # instead. release.yml still handles any tag pushed manually.
+          gh release create "v${{ steps.bump.outputs.new_version }}" \
+            --title "v${{ steps.bump.outputs.new_version }}" --generate-notes
