@@ -942,7 +942,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     if page_entry is not None:
                         title = page_entry.options.get("title", f"Page {p}")
                     else:
-                        title = home_title if p == 1 else f"Page {p}"
+                        # Not a legacy Page entry — check visual pages (the
+                        # store is already loaded by this point since a page
+                        # can only be navigated to after being published).
+                        visual_page = next(
+                            (vp for vp in async_get_store(hass).list_pages(entry.entry_id)
+                             if int(vp.get("page_order", -1)) == p),
+                            None,
+                        )
+                        if visual_page is not None:
+                            title = visual_page.get("title", f"Page {p}")
+                        else:
+                            title = home_title if p == 1 else f"Page {p}"
                 hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p0b2.text", title))
                 # Defensive: hide any overlay remnants on this page (within page block)
                 for (typ, oid) in hass.data[DOMAIN][entry.entry_id].get("popup_overlay_targets", {}).get(p, []):
