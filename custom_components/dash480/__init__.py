@@ -13,10 +13,15 @@ import voluptuous as vol
 from .const import DOMAIN
 from .layout import (
     build_option_page,
+    build_page_ring,
     display_state,
-    home_layout_objects,
+    format_calendar_summary,
+    header_footer_objects,
+    home_fallback_objects,
     option_page_allocator,
+    page_background,
     resolve_layout,
+    resolve_palette,
     render_page,
     ring_neighbors,
 )
@@ -113,19 +118,24 @@ async def async_setup(hass: HomeAssistant, config):
         node_name = entry.data.get("node_name")
         home_title = entry.options.get("home_title", node_name)
         temp_entity = entry.options.get("temp_entity", "")
+        theme = entry.options.get("theme", "dark")
+        sun_state = hass.states.get("sun.sun")
+        sun_above = sun_state.state == "above_horizon" if sun_state else None
+        palette = resolve_palette(theme, sun_above)
 
         lines: list[str] = []
         tval = display_state(hass.states.get(temp_entity) if temp_entity else None)
-        lines.extend(json.dumps(obj) for obj in home_layout_objects(node_name, home_title, tval))
+        lines.extend(json.dumps(obj) for obj in header_footer_objects(node_name, home_title, tval, palette))
 
         all_entries = hass.config_entries.async_entries(DOMAIN)
         page_entries = [e for e in all_entries if e.data.get("role") == "page" and e.data.get("panel_entry_id") == eid]
         page_entries.sort(key=lambda e: int(e.data.get("page_order", 99)))
         page_numbers = [int(e.data.get("page_order", 99)) for e in page_entries]
-        pages_ring = [1] + page_numbers
-        if page_numbers:
+        pages_ring = build_page_ring(page_numbers)
+        page1_entry = next((pe for pe in page_entries if int(pe.data.get("page_order", -1)) == 1), None)
+        if page1_entry is None:
             prev_home, next_home = ring_neighbors(pages_ring, 1)
-            lines.append(json.dumps({"page": 1, "id": 0, "obj": "page", "prev": prev_home, "next": next_home}))
+            lines.extend(json.dumps(obj) for obj in home_fallback_objects(prev_home, next_home, palette))
 
         option_specs: list[dict] = []
         alloc_option_page = option_page_allocator(50)
@@ -134,19 +144,18 @@ async def async_setup(hass: HomeAssistant, config):
             p = int(pe.data.get("page_order", 99))
             prev_p, next_p = ring_neighbors(pages_ring, p)
             lines.append(json.dumps({"page": p, "id": 0, "obj": "page", "prev": prev_p, "next": next_p}))
-            lines.append(json.dumps({"page": p, "obj": "obj", "id": 80, "x": 0, "y": 0, "w": 480, "h": 480,
-                                      "bg_color": "#0B1220", "bg_opa": 255, "click": False}))
+            lines.append(json.dumps(page_background(p, palette=palette)))
 
             slot_defs = [(f"s{i}", pe.options.get(f"s{i}", "")) for i in range(1, 13)]
             icon_overrides = {f"s{i}": pe.options.get(f"s{i}_icon") for i in range(1, 13)}
             page_layout = resolve_layout(pe.options.get("layout"), slot_defs)
 
-            render = render_page(p, page_layout, slot_defs, icon_overrides, hass.states.get, alloc_option_page)
+            render = render_page(p, page_layout, slot_defs, icon_overrides, hass.states.get, alloc_option_page, palette)
             lines.extend(json.dumps(obj) for obj in render.objects)
             option_specs.extend(render.option_specs)
 
         for spec in option_specs:
-            option_render = build_option_page(spec)
+            option_render = build_option_page(spec, palette)
             lines.extend(json.dumps(obj) for obj in option_render.objects)
 
         # Write file to config/dash480_exports
@@ -169,14 +178,6 @@ async def async_setup(hass: HomeAssistant, config):
 PLATFORMS = ["switch", "text", "number", "button", "select"]
 PLATFORMS_PAGE = ["text", "button", "select"]
 
-def _home_layout_lines(node_name: str, title: str, temp_text: str) -> list[str]:
-    """JSONL lines for header/footer and home page with 3 relays.
-
-    Thin wrapper so call sites don't need to change; the actual objects come
-    from layout.home_layout_objects (shared with dump_layout).
-    """
-    return [json.dumps(obj) for obj in home_layout_objects(node_name, title, temp_text)]
-
 
 async def async_get_options_flow(entry: ConfigEntry):
     """Expose options flow to HA (wrapper around options_flow module)."""
@@ -197,9 +198,49 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     node_name = entry.data["node_name"]
     home_title = entry.options.get("home_title", node_name)
     temp_entity = entry.options.get("temp_entity", "")
+    theme = entry.options.get("theme", "dark")
     # control map (id -> entity_id) and sensor text map (entity -> list of (page,id))
     hass.data[DOMAIN][entry.entry_id]["ctrl_map"] = {}
     hass.data[DOMAIN][entry.entry_id]["sensor_map"] = {}
+
+    def _sun_is_up() -> bool | None:
+        sun_state = hass.states.get("sun.sun")
+        return sun_state.state == "above_horizon" if sun_state else None
+
+    def _current_palette() -> dict:
+        return resolve_palette(theme, _sun_is_up())
+
+    async def _on_sun_change(event) -> None:
+        old_state = event.data.get("old_state")
+        new_state = event.data.get("new_state")
+        old_val = old_state.state if old_state else None
+        new_val = new_state.state if new_state else None
+        if old_val == new_val:
+            # sun.sun updates attributes (azimuth etc.) far more often than
+            # its above/below-horizon state flips — only redraw on a real flip.
+            return
+        await _publish_all()
+
+    async def _sync_theme_tracking() -> None:
+        unsub_prev = hass.data[DOMAIN][entry.entry_id].get("unsub_sun")
+        if unsub_prev:
+            unsub_prev()
+            hass.data[DOMAIN][entry.entry_id]["unsub_sun"] = None
+        if theme == "follow_sun":
+            unsub_sun = async_track_state_change_event(hass, ["sun.sun"], _on_sun_change)
+            hass.data[DOMAIN][entry.entry_id]["unsub_sun"] = unsub_sun
+
+    def _sorted_page_entries() -> list:
+        all_entries = hass.config_entries.async_entries(DOMAIN)
+        page_entries = [
+            e for e in all_entries
+            if e.data.get("role") == "page" and e.data.get("panel_entry_id") == entry.entry_id
+        ]
+        page_entries.sort(key=lambda e: int(e.data.get("page_order", 99)))
+        return page_entries
+
+    def _find_page1_entry(page_entries: list):
+        return next((pe for pe in page_entries if int(pe.data.get("page_order", -1)) == 1), None)
 
     # helper to publish current temp to header right label (p0b3)
     async def _publish_temp(value: str) -> None:
@@ -210,13 +251,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
 
     async def _push_home_layout() -> None:
-        """Clear and push header/footer + home relays."""
-        # Clear existing pages first
+        """Clear and push header/footer + home page.
+
+        If a Page entry has claimed page_order 1, delegate to _publish_all()
+        instead — that's the only path that correctly wires up its live
+        entity tracking (touch routing, state-change listeners), which this
+        function alone can't do without duplicating _publish_all's tail.
+        """
+        page_entries = _sorted_page_entries()
+        if _find_page1_entry(page_entries) is not None:
+            await _publish_all()
+            return
         await mqtt.async_publish(hass, f"hasp/{node_name}/command/clearpage", "all")
+        palette = _current_palette()
         temp_text = display_state(hass.states.get(temp_entity)) if temp_entity else ""
-        lines = _home_layout_lines(node_name, home_title, temp_text)
-        for line in lines:
-            await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", line)
+        for obj in header_footer_objects(node_name, home_title, temp_text, palette):
+            await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", json.dumps(obj))
+        page_numbers = [int(e.data.get("page_order", 99)) for e in page_entries]
+        ring = build_page_ring(page_numbers)
+        prev_home, next_home = ring_neighbors(ring, 1)
+        for obj in home_fallback_objects(prev_home, next_home, palette):
+            await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", json.dumps(obj))
 
     async def _publish_page_num(
         p: int,
@@ -231,31 +286,35 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         option_open_map: dict,
         fan_status_map: dict,
         alloc_option_page,
+        palette: dict,
     ) -> None:
         # Compute prev/next based on current configured pages
-        all_entries = hass.config_entries.async_entries(DOMAIN)
-        page_entries = [e for e in all_entries if e.data.get("role") == "page" and e.data.get("panel_entry_id") == entry.entry_id]
-        page_entries.sort(key=lambda e: int(e.data.get("page_order", 99)))
+        page_entries = _sorted_page_entries()
         nums = [int(e.data.get("page_order", 99)) for e in page_entries]
-        ring = [1] + nums
+        ring = build_page_ring(nums)
         prev_p, next_p = ring_neighbors(ring, p)
         # Clear page and draw base
         await mqtt.async_publish(hass, f"hasp/{node_name}/command/clearpage", str(p))
         await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl",
                                   json.dumps({"page": p, "id": 0, "obj": "page", "prev": prev_p, "next": next_p}))
         await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl",
-                                  json.dumps({"page": p, "obj": "obj", "id": 80, "x": 0, "y": 0, "w": 480, "h": 480,
-                                              "bg_color": "#0B1220", "bg_opa": 255, "click": False}))
+                                  json.dumps(page_background(p, palette=palette)))
         # Prebuild hidden modal (legacy popup overlay bookkeeping — see
         # popup_map / popup_overlay_targets handling in _state_event)
-        for line in [
-            f'{{"page":{p},"obj":"btn","id":193,"x":0,"y":0,"w":480,"h":480,"text":"","toggle":false,"bg_color":"#000000","bg_opa":160,"radius":0,"border_width":0,"hidden":1}}',
-            f'{{"page":{p},"obj":"obj","id":194,"x":60,"y":120,"w":360,"h":240,"bg_color":"#1E293B","bg_opa":255,"radius":16,"border_width":0,"hidden":1}}',
-            f'{{"page":{p},"obj":"label","id":195,"x":60,"y":132,"w":360,"h":32,"text":"","text_font":26,"align":"center","text_color":"#E5E7EB","bg_opa":0,"hidden":1}}',
-            f'{{"page":{p},"obj":"btnmatrix","id":196,"x":92,"y":176,"w":296,"h":96,"text_font":20,"options":["Off"],"toggle":1,"one_check":1,"val":0,"radius":10,"hidden":1}}',
-            f'{{"page":{p},"obj":"btn","id":197,"x":316,"y":312,"w":92,"h":36,"text":"Close","text_font":18,"radius":10,"bg_color":"#374151","text_color":"#FFFFFF","border_width":0,"hidden":1}}',
+        for obj in [
+            {"page": p, "obj": "btn", "id": 193, "x": 0, "y": 0, "w": 480, "h": 480, "text": "",
+             "toggle": False, "bg_color": "#000000", "bg_opa": 160, "radius": 0, "border_width": 0, "hidden": 1},
+            {"page": p, "obj": "obj", "id": 194, "x": 60, "y": 120, "w": 360, "h": 240,
+             "bg_color": palette["tile_bg"], "bg_opa": 255, "radius": 16, "border_width": 0, "hidden": 1},
+            {"page": p, "obj": "label", "id": 195, "x": 60, "y": 132, "w": 360, "h": 32, "text": "",
+             "text_font": 26, "align": "center", "text_color": palette["text"], "bg_opa": 0, "hidden": 1},
+            {"page": p, "obj": "btnmatrix", "id": 196, "x": 92, "y": 176, "w": 296, "h": 96, "text_font": 20,
+             "options": ["Off"], "toggle": 1, "one_check": 1, "val": 0, "radius": 10, "hidden": 1},
+            {"page": p, "obj": "btn", "id": 197, "x": 316, "y": 312, "w": 92, "h": 36, "text": "Close",
+             "text_font": 18, "radius": 10, "bg_color": palette["secondary_btn_bg"],
+             "text_color": palette["secondary_btn_text"], "border_width": 0, "hidden": 1},
         ]:
-            await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", line)
+            await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", json.dumps(obj))
         # Reset (not pre-arm) overlay bookkeeping: no popup is open right after
         # a fresh publish, so this must start empty or the very next tile tap
         # gets misread by _state_event as "dismiss the open popup" and swallowed.
@@ -270,7 +329,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         slot_defs = [(f"s{i}", pe.options.get(f"s{i}", "")) for i in range(1, 13)]
         icon_overrides = {f"s{i}": pe.options.get(f"s{i}_icon") for i in range(1, 13)}
         page_layout = resolve_layout(pe.options.get("layout"), slot_defs)
-        render = render_page(p, page_layout, slot_defs, icon_overrides, hass.states.get, alloc_option_page)
+        render = render_page(p, page_layout, slot_defs, icon_overrides, hass.states.get, alloc_option_page, palette)
 
         for obj in render.objects:
             await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", json.dumps(obj))
@@ -299,6 +358,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         option_close_map: dict,
         option_page_titles: dict,
         fan_status_map: dict,
+        palette: dict,
     ) -> None:
         # Visual chrome comes from the same layout.build_option_page used by
         # dump_layout; only the interactive touch-routing maps are built here.
@@ -309,7 +369,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             option_page_titles[page_id] = f"{spec['friendly_name']} Options"
 
             await mqtt.async_publish(hass, f"hasp/{node_name}/command/clearpage", str(page_id))
-            option_render = build_option_page(spec)
+            option_render = build_option_page(spec, palette)
             for obj in option_render.objects:
                 await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", json.dumps(obj))
 
@@ -330,27 +390,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     async def _publish_all() -> None:
         """Publish full layout based on config entities (pages, titles, slots)."""
         _LOGGER.info("Dash480: publishing all for node=%s", node_name)
+        palette = _current_palette()
         await mqtt.async_publish(hass, f"hasp/{node_name}/command/clearpage", "all")
         # Header/footer
         tval = display_state(hass.states.get(temp_entity) if temp_entity else None)
-        lines = _home_layout_lines(node_name, home_title, tval)
-        for line in lines:
-            await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", line)
+        for obj in header_footer_objects(node_name, home_title, tval, palette):
+            await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", json.dumps(obj))
         # Build page list from Page entries linked to this panel
-        all_entries = hass.config_entries.async_entries(DOMAIN)
-        page_entries = [e for e in all_entries if e.data.get("role") == "page" and e.data.get("panel_entry_id") == entry.entry_id]
-        page_entries.sort(key=lambda e: int(e.data.get("page_order", 99)))
+        page_entries = _sorted_page_entries()
         page_numbers = [int(e.data.get("page_order", 99)) for e in page_entries]
-        # include home page 1 at start for wrap math
-        pages_ring = [1] + page_numbers
-        # Update page 1 prev/next to wrap to first/last page if pages exist
-        if page_numbers:
+        pages_ring = build_page_ring(page_numbers)
+        # Draw the home-page fallback only if no Page entry has claimed order 1
+        if _find_page1_entry(page_entries) is None:
             prev_home, next_home = ring_neighbors(pages_ring, 1)
-            await mqtt.async_publish(
-                hass,
-                f"hasp/{node_name}/command/jsonl",
-                json.dumps({"page": 1, "id": 0, "obj": "page", "prev": prev_home, "next": next_home}),
-            )
+            for obj in home_fallback_objects(prev_home, next_home, palette):
+                await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", json.dumps(obj))
         # Draw each page
         ctrl_map: dict[str, str] = {}
         sensor_map: dict[str, list[tuple[int, int]]] = {}
@@ -377,10 +431,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 option_open_map,
                 fan_status_map,
                 alloc_option_page,
+                palette,
             )
         option_close_map: dict[str, dict] = {}
         option_page_titles: dict[int, str] = {}
-        await _publish_option_pages(option_specs, ctrl_map, ent_toggle_map, ent_matrix_map, matrix_map, color_btn_map, option_close_map, option_page_titles, fan_status_map)
+        await _publish_option_pages(option_specs, ctrl_map, ent_toggle_map, ent_matrix_map, matrix_map, color_btn_map, option_close_map, option_page_titles, fan_status_map, palette)
         hass.data[DOMAIN][entry.entry_id]["option_open_map"] = option_open_map
         hass.data[DOMAIN][entry.entry_id]["option_close_map"] = option_close_map
         hass.data[DOMAIN][entry.entry_id]["option_page_titles"] = option_page_titles
@@ -470,7 +525,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         for ent, targets in sensor_map.items():
             async def _make_cb(eid: str):
                 async def _cb(event):
-                    val = display_state(hass.states.get(eid))
+                    state = hass.states.get(eid)
+                    val = format_calendar_summary(state) if eid.split(".")[0] == "calendar" else display_state(state)
                     for (pnum, bid) in sensor_map.get(eid, []):
                         await mqtt.async_publish(hass, f"hasp/{node_name}/command/p{pnum}b{bid}.text", val)
                 return _cb
@@ -784,8 +840,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}b{bid}.text_color", color_hex))
                             hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}b{bid}.val", "1"))
                         else:
-                            # Off => reset to default white
-                            hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}b{bid}.text_color", "#FFFFFF"))
+                            # Off => reset to default tile toggle-button text color
+                            hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}b{bid}.text_color", _current_palette()["toggle_btn_text"]))
                             hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p{p}b{bid}.val", "0"))
                     # Hide overlay
                     for (typ, oid) in hass.data[DOMAIN][entry.entry_id].get("popup_overlay_targets", {}).get(p, []):
@@ -811,7 +867,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 else:
                     all_entries = hass.config_entries.async_entries(DOMAIN)
                     page_entry = next((e for e in all_entries if e.data.get("role") == "page" and e.data.get("panel_entry_id") == entry.entry_id and int(e.data.get("page_order", 0)) == p), None)
-                    title = home_title if p == 1 else (page_entry.options.get("title", f"Page {p}") if page_entry else f"Page {p}")
+                    if page_entry is not None:
+                        title = page_entry.options.get("title", f"Page {p}")
+                    else:
+                        title = home_title if p == 1 else f"Page {p}"
                 hass.async_create_task(mqtt.async_publish(hass, f"hasp/{node_name}/command/p0b2.text", title))
                 # Defensive: hide any overlay remnants on this page (within page block)
                 for (typ, oid) in hass.data[DOMAIN][entry.entry_id].get("popup_overlay_targets", {}).get(p, []):
@@ -837,9 +896,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         unsub_temp = async_track_state_change_event(hass, [temp_entity], _on_temp_change)
         hass.data[DOMAIN][entry.entry_id]["unsub_temp"] = unsub_temp
 
+    # Arm sun tracking immediately if this panel starts in follow_sun mode.
+    await _sync_theme_tracking()
+
     # React to options changes (from Configure dialog or services)
     async def _options_updated(hass_: HomeAssistant, updated: ConfigEntry):
-        nonlocal home_title, temp_entity
+        nonlocal home_title, temp_entity, theme
         home_title = updated.options.get("home_title", updated.data.get("node_name", "Dash"))
         new_temp = updated.options.get("temp_entity", "")
         if new_temp != temp_entity:
@@ -856,6 +918,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await _publish_temp(display_state(hass.states.get(temp_entity) if temp_entity else None))
         # Update title immediately
         await mqtt.async_publish(hass, f"hasp/{node_name}/command/p0b2.text", home_title)
+        new_theme = updated.options.get("theme", "dark")
+        if new_theme != theme:
+            theme = new_theme
+            await _sync_theme_tracking()
+            await _publish_all()
 
     unsub_update = entry.add_update_listener(_options_updated)
     hass.data[DOMAIN][entry.entry_id]["unsub_update"] = unsub_update
@@ -934,6 +1001,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unsub_temp = hass.data[DOMAIN][entry.entry_id].get("unsub_temp")
     if unsub_temp:
         unsub_temp()
+    unsub_sun = hass.data[DOMAIN][entry.entry_id].get("unsub_sun")
+    if unsub_sun:
+        unsub_sun()
     unsub_update = hass.data[DOMAIN][entry.entry_id].get("unsub_update")
     if unsub_update:
         unsub_update()

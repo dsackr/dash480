@@ -12,13 +12,19 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .const import DOMAIN
 
 
-ALLOWED_DOMAINS = {"switch", "light", "fan", "sensor", "cover"}
+ALLOWED_DOMAINS = {"switch", "light", "fan", "sensor", "cover", "calendar"}
 
 LAYOUT_OPTIONS = {
     "grid_3x2": "Grid 3×2 (2 rows)",
     "grid_3x3": "Grid 3×3 (legacy)",
     "clock_top": "Clock Top + 2 rows",
     "shades_row": "Shades Row (bottom)",
+}
+
+THEME_OPTIONS = {
+    "dark": "Dark",
+    "light": "Light",
+    "follow_sun": "Follow Sun",
 }
 
 
@@ -29,6 +35,8 @@ async def async_setup_entry(
 ) -> None:
     role = config_entry.data.get("role", "panel")
     entities: List[SelectEntity] = []
+    if role == "panel":
+        entities.append(Dash480ThemeSelect(hass, config_entry))
     if role == "page":
         p = int(config_entry.data.get("page_order", 2))
         entities.append(Dash480PageLayoutSelect(hass, config_entry, p))
@@ -37,6 +45,49 @@ async def async_setup_entry(
         for s in range(1, 13):
             entities.append(Dash480SlotIconSelect(hass, config_entry, p, s))
     async_add_entities(entities)
+
+
+class Dash480ThemeSelect(SelectEntity):
+    """Panel-level Dark/Light/Follow Sun theme selector."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        self.hass = hass
+        self._entry = entry
+        self._device_identifier = f"dash480_{entry.data['node_name']}"
+        self._attr_name = "Theme"
+        self._attr_icon = "mdi:theme-light-dark"
+        self._attr_unique_id = f"{self._device_identifier}_theme"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._device_identifier)},
+            name=f"Dash480 ({self._entry.data['node_name']})",
+            manufacturer="openHASP",
+            model="ESP32-S3 480x480",
+        )
+
+    @property
+    def options(self) -> list[str]:
+        return list(THEME_OPTIONS.values())
+
+    @property
+    def current_option(self) -> str | None:
+        return THEME_OPTIONS.get(self._entry.options.get("theme", "dark"))
+
+    async def async_select_option(self, option: str) -> None:
+        key = next((k for k, v in THEME_OPTIONS.items() if v == option), None)
+        if not key:
+            return
+        opts = {**self._entry.options, "theme": key}
+        self.hass.config_entries.async_update_entry(self._entry, options=opts)
+        self.async_write_ha_state()
+        # Deliberately not publishing here — the Panel's add_update_listener
+        # (_options_updated in __init__.py) owns rewiring the sun tracker
+        # and doing the full republish, so that responsibility stays in
+        # exactly one place instead of double-publishing.
 
 
 class Dash480AddEntitySelect(SelectEntity):
@@ -244,6 +295,9 @@ ICON_CHOICES = [
     ("Up (E143)", "E143"),
     ("Stop (E4DB)", "E4DB"),
     ("Down (E140)", "E140"),
+    # Placeholder, unverified against the actual font on the device — correct
+    # via this picker if it doesn't render as a calendar glyph.
+    ("Calendar (E1C0)", "E1C0"),
 ]
 
 

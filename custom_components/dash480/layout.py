@@ -24,6 +24,61 @@ TILE_BG = "#1E293B"
 LABEL_COLOR = "#9CA3AF"
 TEXT_COLOR = "#E5E7EB"
 
+# ---------------------------------------------------------------------------
+# Themes — every chrome/structural color used anywhere in a rendered layout
+# routes through one of these palettes, selected by resolve_palette(). Actual
+# light colors (e.g. the color-picker swatches) are NOT theme-driven — they
+# represent real colors a light can be set to, not UI chrome.
+# ---------------------------------------------------------------------------
+
+DARK_PALETTE = {
+    "bg": BG_COLOR,
+    "tile_bg": TILE_BG,
+    "label": LABEL_COLOR,
+    "text": TEXT_COLOR,
+    "header_bg": "#1F2937",
+    "header_title_text": "#FFFFFF",
+    "nav_btn_bg": "#2C3E50",
+    "nav_btn_text": "#FFFFFF",
+    "secondary_btn_bg": "#374151",
+    "secondary_btn_text": "#FFFFFF",
+    "toggle_btn_text": "#FFFFFF",
+    "option_close_bg": "#1F2937",
+    "option_close_text": "#FFFFFF",
+}
+
+LIGHT_PALETTE = {
+    "bg": "#F1F5F9",
+    "tile_bg": "#FFFFFF",
+    "label": "#64748B",
+    "text": "#0F172A",
+    "header_bg": "#E2E8F0",
+    "header_title_text": "#0F172A",
+    "nav_btn_bg": "#CBD5E1",
+    "nav_btn_text": "#0F172A",
+    "secondary_btn_bg": "#CBD5E1",
+    "secondary_btn_text": "#0F172A",
+    "toggle_btn_text": "#0F172A",
+    "option_close_bg": "#E2E8F0",
+    "option_close_text": "#0F172A",
+}
+
+PALETTES = {"dark": DARK_PALETTE, "light": LIGHT_PALETTE}
+
+
+def resolve_palette(theme: str | None, sun_above_horizon: bool | None) -> dict:
+    """Resolve a theme option + current sun state into a concrete palette.
+
+    Unknown/missing theme defaults to dark, matching pre-theme behavior
+    exactly. "follow_sun" with an unknown sun state also defaults to dark
+    (matches the overall default rather than guessing daytime).
+    """
+    if theme == "light":
+        return LIGHT_PALETTE
+    if theme == "follow_sun":
+        return LIGHT_PALETTE if sun_above_horizon else DARK_PALETTE
+    return DARK_PALETTE
+
 # Mirrors homeassistant.const.STATE_UNKNOWN / STATE_UNAVAILABLE as plain
 # strings so this module has no runtime dependency on Home Assistant.
 UNAVAILABLE_STATES = (None, "", "unknown", "unavailable")
@@ -32,6 +87,38 @@ UNAVAILABLE_STATES = (None, "", "unknown", "unavailable")
 def display_state(state: Any) -> str:
     """Human-displayable text for an HA state object, or '--' if unset/unavailable."""
     return str(state.state) if state and state.state not in UNAVAILABLE_STATES else "--"
+
+
+# Placeholder codepoint (unverified against the actual font flashed to the
+# device) — correctable per-slot via the existing icon picker (select.py's
+# ICON_CHOICES) without a code release, same as every other icon.
+DEFAULT_CALENDAR_ICON = "E1C0"
+
+# A calendar tile has no reserved space to wrap/scroll text, so the summary
+# is manually truncated rather than relying on LVGL long_mode support.
+CALENDAR_SUMMARY_MAX_CHARS = 20
+
+
+def format_calendar_summary(state: Any) -> str:
+    """One-line 'next/current event' text for a calendar entity's compact tile."""
+    if not state or state.state in UNAVAILABLE_STATES:
+        return "No events"
+    message = state.attributes.get("message")
+    if not message:
+        return "No events"
+    all_day = state.attributes.get("all_day", False)
+    time_str = "All day" if all_day else ""
+    if not all_day:
+        start_time = state.attributes.get("start_time")
+        if start_time:
+            try:
+                time_str = str(start_time).split(" ")[1][:5]
+            except Exception:
+                time_str = ""
+    label = f"{message} {time_str}".strip() if time_str else str(message)
+    if len(label) <= CALENDAR_SUMMARY_MAX_CHARS:
+        return label
+    return label[: CALENDAR_SUMMARY_MAX_CHARS - 1].rstrip() + "…"
 
 
 # ---------------------------------------------------------------------------
@@ -134,9 +221,9 @@ def page_nav(page: int, prev_page: int, next_page: int) -> dict:
     return {"page": page, "id": 0, "obj": "page", "prev": prev_page, "next": next_page}
 
 
-def page_background(page: int, obj_id: int = 80) -> dict:
+def page_background(page: int, obj_id: int = 80, palette: dict = DARK_PALETTE) -> dict:
     return {"page": page, "obj": "obj", "id": obj_id, "x": 0, "y": 0, "w": 480, "h": 480,
-            "bg_color": BG_COLOR, "bg_opa": 255, "click": False}
+            "bg_color": palette["bg"], "bg_opa": 255, "click": False}
 
 
 def option_page_allocator(start: int = 50) -> Callable[[], int]:
@@ -155,52 +242,87 @@ def option_page_allocator(start: int = 50) -> Callable[[], int]:
 # Header/footer + home page chrome
 # ---------------------------------------------------------------------------
 
-def home_layout_objects(node_name: str, title: str, temp_text: str) -> list[dict]:
-    """Header/footer chrome plus the home page's clock and 3 relay buttons."""
+def header_footer_objects(
+    node_name: str, title: str, temp_text: str, palette: dict = DARK_PALETTE
+) -> list[dict]:
+    """Persistent page-0 chrome: header bar (date/title/temp) + nav footer.
+
+    Always drawn regardless of what page 1 shows — this is independent of
+    whether page 1 is the hardcoded fallback or a user-configured Page entry.
+    """
     return [
         {"page": 0, "id": 0, "obj": "page"},
-        {"page": 1, "id": 0, "obj": "page"},
         {"page": 0, "id": 10, "obj": "obj", "x": 0, "y": 0, "w": 480, "h": 56,
-         "bg_color": "#1F2937", "bg_opa": 255, "radius": 0, "border_width": 0,
+         "bg_color": palette["header_bg"], "bg_opa": 255, "radius": 0, "border_width": 0,
          "bg_grad_dir": "none", "outline_width": 0, "shadow_width": 0},
         {"page": 0, "id": 1, "obj": "label", "x": 12, "y": 8, "w": 120, "h": 40,
          "text": "--", "template": "%b %d", "text_font": 35, "align": "left",
-         "text_color": TEXT_COLOR, "bg_opa": 0},
+         "text_color": palette["text"], "bg_opa": 0},
         {"page": 0, "id": 2, "obj": "btn", "x": 140, "y": 8, "w": 200, "h": 40,
-         "text": title, "text_font": 35, "text_color": "#FFFFFF", "bg_opa": 0,
+         "text": title, "text_font": 35, "text_color": palette["header_title_text"], "bg_opa": 0,
          "border_width": 0, "radius": 0, "outline_width": 0, "shadow_width": 0,
          "toggle": False},
         {"page": 0, "id": 3, "obj": "btn", "x": 320, "y": 8, "w": 148, "h": 40,
          "text": temp_text or "--", "text_font": 24, "align": "right",
-         "text_color": TEXT_COLOR, "bg_opa": 0, "border_width": 0, "radius": 0,
+         "text_color": palette["text"], "bg_opa": 0, "border_width": 0, "radius": 0,
          "outline_width": 0, "shadow_width": 0, "toggle": False},
         {"page": 0, "id": 90, "obj": "btn", "action": {"down": "page prev"}, "x": 0, "y": 430,
-         "w": 160, "h": 50, "bg_color": "#2C3E50", "text": "", "text_color": "#FFFFFF",
+         "w": 160, "h": 50, "bg_color": palette["nav_btn_bg"], "text": "",
+         "text_color": palette["nav_btn_text"],
          "radius": 0, "border_side": 0, "border_width": 0, "bg_grad_dir": "none",
          "outline_width": 0, "shadow_width": 0, "text_font": 48},
         {"page": 0, "id": 91, "obj": "btn", "action": {"down": "page 1"}, "x": 160, "y": 430,
-         "w": 160, "h": 50, "bg_color": "#2C3E50", "text": "", "text_color": "#FFFFFF",
+         "w": 160, "h": 50, "bg_color": palette["nav_btn_bg"], "text": "",
+         "text_color": palette["nav_btn_text"],
          "radius": 0, "border_side": 0, "border_width": 0, "bg_grad_dir": "none",
          "outline_width": 0, "shadow_width": 0, "text_font": 48},
         {"page": 0, "id": 92, "obj": "btn", "action": {"down": "page next"}, "x": 320, "y": 430,
-         "w": 160, "h": 50, "bg_color": "#2C3E50", "text": "", "text_color": "#FFFFFF",
+         "w": 160, "h": 50, "bg_color": palette["nav_btn_bg"], "text": "",
+         "text_color": palette["nav_btn_text"],
          "radius": 0, "border_side": 0, "border_width": 0, "bg_grad_dir": "none",
          "outline_width": 0, "shadow_width": 0, "text_font": 48},
+    ]
+
+
+def home_fallback_objects(
+    prev_page: int, next_page: int, palette: dict = DARK_PALETTE
+) -> list[dict]:
+    """Default page-1 content: a clock + 3 relay buttons.
+
+    A safe working default so the panel isn't blank before Home Assistant
+    takes over. Only drawn when no Page config entry claims page_order == 1
+    — once one exists, it fully replaces this instead.
+    """
+    return [
+        page_nav(1, prev_page, next_page),
         {"page": 1, "obj": "obj", "id": 180, "x": 0, "y": 0, "w": 480, "h": 480,
-         "bg_color": BG_COLOR, "bg_opa": 255, "click": False},
+         "bg_color": palette["bg"], "bg_opa": 255, "click": False},
         {"page": 1, "obj": "label", "id": 100, "x": 0, "y": 72, "w": 480, "h": 96,
          "text": "00:00", "template": "%H:%M", "text_font": 96, "align": "center",
-         "text_color": TEXT_COLOR, "bg_opa": 0},
+         "text_color": palette["text"], "bg_opa": 0},
         {"page": 1, "obj": "btn", "id": 112, "x": 25, "y": 300, "w": 120, "h": 60,
          "text": "Relay 1", "text_font": 26, "toggle": True, "groupid": 1, "radius": 8,
-         "bg_color": "#374151", "text_color": "#FFFFFF", "border_width": 0},
+         "bg_color": palette["secondary_btn_bg"], "text_color": palette["secondary_btn_text"],
+         "border_width": 0},
         {"page": 1, "obj": "btn", "id": 122, "x": 175, "y": 300, "w": 120, "h": 60,
          "text": "Relay 2", "text_font": 26, "toggle": True, "groupid": 2, "radius": 8,
-         "bg_color": "#374151", "text_color": "#FFFFFF", "border_width": 0},
+         "bg_color": palette["secondary_btn_bg"], "text_color": palette["secondary_btn_text"],
+         "border_width": 0},
         {"page": 1, "obj": "btn", "id": 132, "x": 325, "y": 300, "w": 120, "h": 60,
          "text": "Relay 3", "text_font": 26, "toggle": True, "groupid": 3, "radius": 8,
-         "bg_color": "#374151", "text_color": "#FFFFFF", "border_width": 0},
+         "bg_color": palette["secondary_btn_bg"], "text_color": palette["secondary_btn_text"],
+         "border_width": 0},
     ]
+
+
+def build_page_ring(page_numbers: list[int]) -> list[int]:
+    """Wraparound page ring including the home page.
+
+    Page 1 is only implicitly prepended when no real Page entry has claimed
+    it — once one has, `page_numbers` already contains it, and prepending
+    again would duplicate it and corrupt `ring_neighbors`.
+    """
+    return page_numbers if 1 in page_numbers else [1] + page_numbers
 
 
 # ---------------------------------------------------------------------------
@@ -227,6 +349,7 @@ def render_page(
     icon_overrides: dict[str, str],
     state_lookup: StateLookup,
     alloc_option_page: Callable[[], int],
+    palette: dict = DARK_PALETTE,
 ) -> PageRender:
     """Build every JSONL tile object and touch-routing map fragment for one page.
 
@@ -251,7 +374,7 @@ def render_page(
             out.objects.append({
                 "page": page, "obj": "label", "id": 70, "x": x, "y": y + 4, "w": w, "h": h - 8,
                 "text": "00:00", "template": "%H:%M", "text_font": 96, "align": "center",
-                "text_color": TEXT_COLOR, "bg_opa": 0,
+                "text_color": palette["text"], "bg_opa": 0,
             })
             continue
 
@@ -270,10 +393,10 @@ def render_page(
             full_y = y + (h - 88) // 2
             mid = base + 7
             out.objects.append({"page": page, "obj": "obj", "id": base + 5, "x": full_x,
-                                 "y": full_y, "w": full_w, "h": 88, "radius": 18, "bg_color": BG_COLOR})
+                                 "y": full_y, "w": full_w, "h": 88, "radius": 18, "bg_color": palette["bg"]})
             out.objects.append({"page": page, "obj": "label", "id": base + 6, "x": full_x + 18,
                                  "y": full_y + 12, "w": full_w - 36, "h": 24, "text": label,
-                                 "text_font": 20, "text_color": LABEL_COLOR, "bg_opa": 0})
+                                 "text_font": 20, "text_color": palette["label"], "bg_opa": 0})
             out.objects.append({"page": page, "obj": "btnmatrix", "id": mid, "x": full_x + 30,
                                  "y": full_y + 42, "w": full_w - 60, "h": 56, "text_font": 28,
                                  "options": ["Up", "Pause", "Down"], "one_check": 0, "radius": 12})
@@ -283,10 +406,10 @@ def render_page(
             continue
 
         out.objects.append({"page": page, "obj": "obj", "id": base + 1, "x": x, "y": y, "w": w,
-                             "h": h, "radius": 14, "bg_color": TILE_BG, "bg_opa": 255, "click": False})
+                             "h": h, "radius": 14, "bg_color": palette["tile_bg"], "bg_opa": 255, "click": False})
         out.objects.append({"page": page, "obj": "label", "id": base, "x": x + 8, "y": y + 6,
                              "w": max(112, w - 16), "h": 24, "text": label, "text_font": 18,
-                             "text_color": LABEL_COLOR, "bg_opa": 0})
+                             "text_color": palette["label"], "bg_opa": 0})
 
         bx = x + max(20, (w - 96) // 2)
         by = y + 36
@@ -300,8 +423,8 @@ def render_page(
             icon = chr(icon_value)
             out.objects.append({"page": page, "obj": "btn", "id": base + 2, "x": bx, "y": by,
                                  "w": 96, "h": 72, "text": icon, "text_font": 72, "toggle": True,
-                                 "radius": 14, "bg_color": TILE_BG, "bg_opa": 255,
-                                 "text_color": "#FFFFFF", "border_width": 0})
+                                 "radius": 14, "bg_color": palette["tile_bg"], "bg_opa": 255,
+                                 "text_color": palette["toggle_btn_text"], "border_width": 0})
             out.ent_toggle_map.setdefault(ent, []).append((page, base + 2))
             out.ctrl_map[f"p{page}b{base + 2}"] = ent
 
@@ -323,7 +446,7 @@ def render_page(
                 status_id = base + 3
                 out.objects.append({"page": page, "obj": "label", "id": status_id, "x": x + 8,
                                      "y": y + h - 36, "w": w - 16, "h": 28, "text": "Tap for speed",
-                                     "text_font": 20, "align": "center", "text_color": LABEL_COLOR,
+                                     "text_font": 20, "align": "center", "text_color": palette["label"],
                                      "bg_opa": 0, "click": False})
                 out.fan_status_map.setdefault(ent, []).append((page, ("l", status_id)))
                 out.objects.append({"page": page, "obj": "btn", "id": trigger_btn_id, "x": x + 8,
@@ -340,7 +463,7 @@ def render_page(
                 hint_id = base + 3
                 out.objects.append({"page": page, "obj": "label", "id": hint_id, "x": x + 8,
                                      "y": y + h - 36, "w": w - 16, "h": 28, "text": "Tap for color",
-                                     "text_font": 20, "align": "center", "text_color": LABEL_COLOR,
+                                     "text_font": 20, "align": "center", "text_color": palette["label"],
                                      "bg_opa": 0, "click": False})
                 out.objects.append({"page": page, "obj": "btn", "id": trigger_btn_id, "x": x + 8,
                                      "y": y + h - 36, "w": w - 16, "h": 28, "text": "", "toggle": 0,
@@ -353,10 +476,10 @@ def render_page(
             full_y = y + (h - 88) // 2
             mid = base + 7
             out.objects.append({"page": page, "obj": "obj", "id": base + 5, "x": full_x,
-                                 "y": full_y, "w": full_w, "h": 88, "radius": 18, "bg_color": BG_COLOR})
+                                 "y": full_y, "w": full_w, "h": 88, "radius": 18, "bg_color": palette["bg"]})
             out.objects.append({"page": page, "obj": "label", "id": base + 6, "x": full_x + 18,
                                  "y": full_y + 12, "w": full_w - 36, "h": 24, "text": label,
-                                 "text_font": 20, "text_color": LABEL_COLOR, "bg_opa": 0})
+                                 "text_font": 20, "text_color": palette["label"], "bg_opa": 0})
             out.objects.append({"page": page, "obj": "btnmatrix", "id": mid, "x": full_x + 30,
                                  "y": full_y + 42, "w": full_w - 60, "h": 56, "text_font": 28,
                                  "options": ["Up", "Pause", "Down"], "one_check": 0, "radius": 12})
@@ -364,6 +487,22 @@ def render_page(
             out.matrix_map[f"p{page}m{mid}"] = mi
             out.ent_matrix_map.setdefault(ent, []).append((page, mid, mi))
             out.ctrl_map[f"p{page}b{base + 2}"] = ent
+        elif domain == "calendar":
+            icon_code = icon_overrides.get(key) or DEFAULT_CALENDAR_ICON
+            try:
+                icon_value = int(icon_code, 16)
+            except (TypeError, ValueError):
+                icon_value = int(DEFAULT_CALENDAR_ICON, 16)
+            icon = chr(icon_value)
+            out.objects.append({"page": page, "obj": "label", "id": base + 3, "x": x + 8,
+                                 "y": y + 34, "w": 32, "h": 32, "text": icon, "text_font": 28,
+                                 "text_color": palette["text"], "bg_opa": 0, "click": False})
+            summary_text = format_calendar_summary(st)
+            out.objects.append({"page": page, "obj": "btn", "id": base + 2, "x": x + 44, "y": y + 36,
+                                 "w": w - 52, "h": 44, "text": summary_text, "text_font": 16,
+                                 "text_color": palette["text"], "toggle": False, "bg_opa": 0,
+                                 "border_width": 0, "click": False})
+            out.sensor_map.setdefault(ent, []).append((page, base + 2))
         else:
             val = display_state(st)
             out.objects.append({"page": page, "obj": "btn", "id": base + 2, "x": bx, "y": by,
@@ -403,7 +542,7 @@ class OptionPageRender:
     color_buttons: list[tuple[int, str, dict]] = field(default_factory=list)
 
 
-def build_option_page(spec: dict) -> OptionPageRender:
+def build_option_page(spec: dict, palette: dict = DARK_PALETTE) -> OptionPageRender:
     """Visual chrome + object ids for a fan-speed or light-color option page."""
     page_id = spec["page_id"]
     origin = spec["origin_page"]
@@ -414,12 +553,12 @@ def build_option_page(spec: dict) -> OptionPageRender:
     objects = [
         {"page": page_id, "id": 0, "obj": "page", "prev": origin, "next": origin},
         {"page": page_id, "obj": "obj", "id": 10, "x": 0, "y": 0, "w": 480, "h": 480,
-         "bg_color": BG_COLOR, "bg_opa": 255, "click": False},
+         "bg_color": palette["bg"], "bg_opa": 255, "click": False},
         {"page": page_id, "obj": "label", "id": 11, "x": 24, "y": 24, "w": 432, "h": 48,
-         "text": friendly, "text_font": 36, "align": "center", "text_color": TEXT_COLOR, "bg_opa": 0},
+         "text": friendly, "text_font": 36, "align": "center", "text_color": palette["text"], "bg_opa": 0},
         {"page": page_id, "obj": "btn", "id": close_id, "x": 360, "y": 24, "w": 96, "h": 48,
-         "text": "Close", "text_font": 24, "radius": 12, "bg_color": "#1F2937",
-         "text_color": "#FFFFFF", "border_width": 0},
+         "text": "Close", "text_font": 24, "radius": 12, "bg_color": palette["option_close_bg"],
+         "text_color": palette["option_close_text"], "border_width": 0},
     ]
     render = OptionPageRender(objects=objects, close_button_id=close_id)
 
@@ -427,7 +566,7 @@ def build_option_page(spec: dict) -> OptionPageRender:
         status_id, matrix_id = 40, 60
         objects.append({"page": page_id, "obj": "label", "id": status_id, "x": 24, "y": 96,
                          "w": 432, "h": 36, "text": "--", "text_font": 28, "align": "center",
-                         "text_color": LABEL_COLOR, "bg_opa": 0})
+                         "text_color": palette["label"], "bg_opa": 0})
         objects.append({"page": page_id, "obj": "btnmatrix", "id": matrix_id, "x": 72, "y": 168,
                          "w": 336, "h": 144, "text_font": 32, "options": FAN_SPEED_OPTIONS,
                          "toggle": 1, "one_check": 1, "val": 0, "radius": 16})
@@ -437,8 +576,8 @@ def build_option_page(spec: dict) -> OptionPageRender:
         power_id = 40
         objects.append({"page": page_id, "obj": "btn", "id": power_id, "x": 168, "y": 108,
                          "w": 144, "h": 72, "text": "Power", "text_font": 30, "toggle": 1,
-                         "radius": 14, "bg_color": TILE_BG, "bg_opa": 255,
-                         "text_color": "#FFFFFF", "border_width": 0})
+                         "radius": 14, "bg_color": palette["tile_bg"], "bg_opa": 255,
+                         "text_color": palette["toggle_btn_text"], "border_width": 0})
         render.power_button_id = power_id
         btn_id = 80
         start_x, start_y, btn_w, btn_h, gap = 72, 216, 96, 96, 24

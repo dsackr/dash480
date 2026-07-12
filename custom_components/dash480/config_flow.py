@@ -67,11 +67,13 @@ class Dash480ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None and not errors:
             panel_id = user_input.get("panel")
-            # Auto-pick next available page number 2..9 for this panel
+            # Auto-pick next available page number 1..9 for this panel. Order 1
+            # is the home page: claiming it replaces the hardcoded clock+relay
+            # fallback (see layout.home_fallback_objects).
             pages = [e for e in self._async_current_entries() if e.data.get("role") == "page" and e.data.get("panel_entry_id") == panel_id]
             used = {int(e.data.get("page_order", 0)) for e in pages if str(e.data.get("page_order", "")).isdigit()}
             order = None
-            for n in range(2, 10):
+            for n in range(1, 10):
                 if n not in used:
                     order = n
                     break
