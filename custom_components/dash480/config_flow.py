@@ -10,6 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.selector import selector
 
 from .const import DOMAIN
+from .pages_store import async_allocate_page_order
 
 
 class Dash480ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -67,16 +68,12 @@ class Dash480ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None and not errors:
             panel_id = user_input.get("panel")
-            # Auto-pick next available page number 1..9 for this panel. Order 1
-            # is the home page: claiming it replaces the hardcoded clock+relay
-            # fallback (see layout.home_fallback_objects).
-            pages = [e for e in self._async_current_entries() if e.data.get("role") == "page" and e.data.get("panel_entry_id") == panel_id]
-            used = {int(e.data.get("page_order", 0)) for e in pages if str(e.data.get("page_order", "")).isdigit()}
-            order = None
-            for n in range(1, 10):
-                if n not in used:
-                    order = n
-                    break
+            # Auto-pick next available page number 1..9 for this panel, shared
+            # with the visual-page-builder's allocator so neither model can
+            # claim a number the other already has. Order 1 is the home page:
+            # claiming it replaces the hardcoded clock+relay fallback (see
+            # layout.home_fallback_objects).
+            order = await async_allocate_page_order(self.hass, panel_id)
             if order is None:
                 errors["base"] = "max_pages"
             else:

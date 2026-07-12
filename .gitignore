@@ -18,3 +18,7 @@ venv/
 
 # Home Assistant
 .storage/
+
+# Frontend build tooling (built output IS committed, under
+# custom_components/dash480/panel_dist/ — only sources/tooling are ignored)
+frontend/node_modules/

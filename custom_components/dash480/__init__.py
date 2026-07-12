@@ -4,7 +4,10 @@ from __future__ import annotations
 import json
 import logging
 import os
-from homeassistant.components import mqtt
+from pathlib import Path
+from typing import Any
+from homeassistant.components import mqtt, panel_custom
+from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback, ServiceCall
 from homeassistant.helpers.event import async_track_state_change_event
@@ -23,10 +26,66 @@ from .layout import (
     resolve_layout,
     resolve_palette,
     render_page,
+    render_tile_page,
     ring_neighbors,
 )
+from .pages_store import async_get_store
 
 _LOGGER = logging.getLogger(__name__)
+
+
+async def _gather_panel_pages(hass: HomeAssistant, panel_entry_id: str) -> list[tuple[int, str, Any]]:
+    """(page_order, source, page_obj) for every legacy Page entry + visual
+    page on this panel, sorted by page_order. `source` is "legacy" (a Page
+    ConfigEntry, rendered via layout.render_page) or "visual" (a plain dict
+    from pages_store.py, rendered via layout.render_tile_page). Single
+    source of truth for the page ring/nav so the two page models can coexist
+    without colliding (pages_store's allocator already keeps their
+    page_order numbers disjoint per panel).
+    """
+    legacy = [
+        (int(e.data.get("page_order", 99)), "legacy", e)
+        for e in hass.config_entries.async_entries(DOMAIN)
+        if e.data.get("role") == "page" and e.data.get("panel_entry_id") == panel_entry_id
+    ]
+    visual_store = async_get_store(hass)
+    await visual_store.async_load()
+    visual = [
+        (int(p["page_order"]), "visual", p)
+        for p in visual_store.list_pages(panel_entry_id)
+    ]
+    return sorted(legacy + visual, key=lambda item: item[0])
+
+
+def _page1_exists(pages: list[tuple[int, str, Any]]) -> bool:
+    return any(order == 1 for order, _, _ in pages)
+
+
+PANEL_URL_PATH = "dash480"
+PANEL_MODULE_FILENAME = "dash480-panel.js"
+PANEL_STATIC_URL = f"/dash480_static/{PANEL_MODULE_FILENAME}"
+
+
+async def _async_register_panel(hass: HomeAssistant) -> None:
+    """Register the visual-builder sidebar panel and its static JS bundle.
+
+    The bundle is built (Vite + TypeScript + Lit) from frontend/ and its
+    output is committed to panel_dist/ — HACS installs never need Node.
+    """
+    dist_path = Path(__file__).parent / "panel_dist" / PANEL_MODULE_FILENAME
+    await hass.http.async_register_static_paths([
+        StaticPathConfig(PANEL_STATIC_URL, str(dist_path), False)
+    ])
+    await panel_custom.async_register_panel(
+        hass,
+        frontend_url_path=PANEL_URL_PATH,
+        webcomponent_name="dash480-panel",
+        module_url=PANEL_STATIC_URL,
+        sidebar_title="Dash480",
+        sidebar_icon="mdi:tablet-dashboard",
+        require_admin=True,
+        config={},
+    )
 
 # Top-level (component) setup: register services once and route by entry_id
 async def async_setup(hass: HomeAssistant, config):
@@ -127,30 +186,30 @@ async def async_setup(hass: HomeAssistant, config):
         tval = display_state(hass.states.get(temp_entity) if temp_entity else None)
         lines.extend(json.dumps(obj) for obj in header_footer_objects(node_name, home_title, tval, palette))
 
-        all_entries = hass.config_entries.async_entries(DOMAIN)
-        page_entries = [e for e in all_entries if e.data.get("role") == "page" and e.data.get("panel_entry_id") == eid]
-        page_entries.sort(key=lambda e: int(e.data.get("page_order", 99)))
-        page_numbers = [int(e.data.get("page_order", 99)) for e in page_entries]
+        merged_pages = await _gather_panel_pages(hass, eid)
+        page_numbers = [order for order, _, _ in merged_pages]
         pages_ring = build_page_ring(page_numbers)
-        page1_entry = next((pe for pe in page_entries if int(pe.data.get("page_order", -1)) == 1), None)
-        if page1_entry is None:
+        if not _page1_exists(merged_pages):
             prev_home, next_home = ring_neighbors(pages_ring, 1)
             lines.extend(json.dumps(obj) for obj in home_fallback_objects(prev_home, next_home, palette))
 
         option_specs: list[dict] = []
         alloc_option_page = option_page_allocator(50)
 
-        for pe in page_entries:
-            p = int(pe.data.get("page_order", 99))
+        for p, source, page_obj in merged_pages:
             prev_p, next_p = ring_neighbors(pages_ring, p)
             lines.append(json.dumps({"page": p, "id": 0, "obj": "page", "prev": prev_p, "next": next_p}))
             lines.append(json.dumps(page_background(p, palette=palette)))
 
-            slot_defs = [(f"s{i}", pe.options.get(f"s{i}", "")) for i in range(1, 13)]
-            icon_overrides = {f"s{i}": pe.options.get(f"s{i}_icon") for i in range(1, 13)}
-            page_layout = resolve_layout(pe.options.get("layout"), slot_defs)
+            if source == "legacy":
+                pe = page_obj
+                slot_defs = [(f"s{i}", pe.options.get(f"s{i}", "")) for i in range(1, 13)]
+                icon_overrides = {f"s{i}": pe.options.get(f"s{i}_icon") for i in range(1, 13)}
+                page_layout = resolve_layout(pe.options.get("layout"), slot_defs)
+                render = render_page(p, page_layout, slot_defs, icon_overrides, hass.states.get, alloc_option_page, palette)
+            else:
+                render = render_tile_page(p, page_obj, hass.states.get, alloc_option_page, palette)
 
-            render = render_page(p, page_layout, slot_defs, icon_overrides, hass.states.get, alloc_option_page, palette)
             lines.extend(json.dumps(obj) for obj in render.objects)
             option_specs.extend(render.option_specs)
 
@@ -170,6 +229,11 @@ async def async_setup(hass: HomeAssistant, config):
         _LOGGER.info("Dash480: dump_layout wrote %s (%d lines)", path, len(lines))
 
     hass.services.async_register(DOMAIN, "dump_layout", svc_dump_layout)
+
+    from .websocket_api import async_register as async_register_websocket_api  # local import
+
+    async_register_websocket_api(hass)
+    await _async_register_panel(hass)
 
     store["services_registered"] = True
     return True
@@ -230,18 +294,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             unsub_sun = async_track_state_change_event(hass, ["sun.sun"], _on_sun_change)
             hass.data[DOMAIN][entry.entry_id]["unsub_sun"] = unsub_sun
 
-    def _sorted_page_entries() -> list:
-        all_entries = hass.config_entries.async_entries(DOMAIN)
-        page_entries = [
-            e for e in all_entries
-            if e.data.get("role") == "page" and e.data.get("panel_entry_id") == entry.entry_id
-        ]
-        page_entries.sort(key=lambda e: int(e.data.get("page_order", 99)))
-        return page_entries
-
-    def _find_page1_entry(page_entries: list):
-        return next((pe for pe in page_entries if int(pe.data.get("page_order", -1)) == 1), None)
-
     # helper to publish current temp to header right label (p0b3)
     async def _publish_temp(value: str) -> None:
         await mqtt.async_publish(
@@ -258,8 +310,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entity tracking (touch routing, state-change listeners), which this
         function alone can't do without duplicating _publish_all's tail.
         """
-        page_entries = _sorted_page_entries()
-        if _find_page1_entry(page_entries) is not None:
+        merged_pages = await _gather_panel_pages(hass, entry.entry_id)
+        if _page1_exists(merged_pages):
             await _publish_all()
             return
         await mqtt.async_publish(hass, f"hasp/{node_name}/command/clearpage", "all")
@@ -267,7 +319,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         temp_text = display_state(hass.states.get(temp_entity)) if temp_entity else ""
         for obj in header_footer_objects(node_name, home_title, temp_text, palette):
             await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", json.dumps(obj))
-        page_numbers = [int(e.data.get("page_order", 99)) for e in page_entries]
+        page_numbers = [order for order, _, _ in merged_pages]
         ring = build_page_ring(page_numbers)
         prev_home, next_home = ring_neighbors(ring, 1)
         for obj in home_fallback_objects(prev_home, next_home, palette):
@@ -275,7 +327,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     async def _publish_page_num(
         p: int,
-        pe,
+        source: str,
+        page_obj,
+        ring: list,
         ctrl_map: dict,
         sensor_map: dict,
         ent_toggle_map: dict,
@@ -288,10 +342,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         alloc_option_page,
         palette: dict,
     ) -> None:
-        # Compute prev/next based on current configured pages
-        page_entries = _sorted_page_entries()
-        nums = [int(e.data.get("page_order", 99)) for e in page_entries]
-        ring = build_page_ring(nums)
         prev_p, next_p = ring_neighbors(ring, p)
         # Clear page and draw base
         await mqtt.async_publish(hass, f"hasp/{node_name}/command/clearpage", str(p))
@@ -323,13 +373,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         popup_map[f"p{p}b193"] = {"type": "close_popup", "page": p}
         popup_map[f"p{p}b197"] = {"type": "close_popup", "page": p}
 
-        # Draw tiles — single shared implementation (layout.render_page),
-        # also used by the dump_layout debug export, so the two can no
-        # longer drift out of sync.
-        slot_defs = [(f"s{i}", pe.options.get(f"s{i}", "")) for i in range(1, 13)]
-        icon_overrides = {f"s{i}": pe.options.get(f"s{i}_icon") for i in range(1, 13)}
-        page_layout = resolve_layout(pe.options.get("layout"), slot_defs)
-        render = render_page(p, page_layout, slot_defs, icon_overrides, hass.states.get, alloc_option_page, palette)
+        # Draw tiles — single shared implementation (layout.render_page for
+        # legacy Page entries, layout.render_tile_page for visual pages),
+        # also used by the dump_layout debug export, so these can no longer
+        # drift out of sync.
+        if source == "legacy":
+            pe = page_obj
+            slot_defs = [(f"s{i}", pe.options.get(f"s{i}", "")) for i in range(1, 13)]
+            icon_overrides = {f"s{i}": pe.options.get(f"s{i}_icon") for i in range(1, 13)}
+            page_layout = resolve_layout(pe.options.get("layout"), slot_defs)
+            render = render_page(p, page_layout, slot_defs, icon_overrides, hass.states.get, alloc_option_page, palette)
+        else:
+            render = render_tile_page(p, page_obj, hass.states.get, alloc_option_page, palette)
 
         for obj in render.objects:
             await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", json.dumps(obj))
@@ -396,12 +451,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         tval = display_state(hass.states.get(temp_entity) if temp_entity else None)
         for obj in header_footer_objects(node_name, home_title, tval, palette):
             await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", json.dumps(obj))
-        # Build page list from Page entries linked to this panel
-        page_entries = _sorted_page_entries()
-        page_numbers = [int(e.data.get("page_order", 99)) for e in page_entries]
+        # Build page list from legacy Page entries + visual pages linked to this panel
+        merged_pages = await _gather_panel_pages(hass, entry.entry_id)
+        page_numbers = [order for order, _, _ in merged_pages]
         pages_ring = build_page_ring(page_numbers)
-        # Draw the home-page fallback only if no Page entry has claimed order 1
-        if _find_page1_entry(page_entries) is None:
+        # Draw the home-page fallback only if nothing has claimed order 1
+        if not _page1_exists(merged_pages):
             prev_home, next_home = ring_neighbors(pages_ring, 1)
             for obj in home_fallback_objects(prev_home, next_home, palette):
                 await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", json.dumps(obj))
@@ -416,11 +471,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         option_specs: list[dict] = []
         option_open_map: dict[str, dict] = {}
         alloc_option_page = option_page_allocator(50)
-        for pe in page_entries:
-            p = int(pe.data.get("page_order", 99))
+        for p, source, page_obj in merged_pages:
             await _publish_page_num(
                 p,
-                pe,
+                source,
+                page_obj,
+                pages_ring,
                 ctrl_map,
                 sensor_map,
                 ent_toggle_map,

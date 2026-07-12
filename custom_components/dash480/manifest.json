@@ -3,7 +3,7 @@
   "name": "Dash480",
   "codeowners": ["@dsackr"],
   "config_flow": true,
-  "dependencies": ["mqtt", "sun"],
+  "dependencies": ["mqtt", "sun", "panel_custom"],
   "documentation": "https://github.com/dsackr/dash480",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/dsackr/dash480/issues",

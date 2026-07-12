@@ -414,63 +414,13 @@ def render_page(
         bx = x + max(20, (w - 96) // 2)
         by = y + 36
 
-        if domain in ("switch", "light", "fan"):
-            icon_code = icon_overrides.get(key) or ("E210" if domain == "fan" else "E425")
-            try:
-                icon_value = int(icon_code, 16)
-            except (TypeError, ValueError):
-                icon_value = int("E425", 16)
-            icon = chr(icon_value)
-            out.objects.append({"page": page, "obj": "btn", "id": base + 2, "x": bx, "y": by,
-                                 "w": 96, "h": 72, "text": icon, "text_font": 72, "toggle": True,
-                                 "radius": 14, "bg_color": palette["tile_bg"], "bg_opa": 255,
-                                 "text_color": palette["toggle_btn_text"], "border_width": 0})
-            out.ent_toggle_map.setdefault(ent, []).append((page, base + 2))
-            out.ctrl_map[f"p{page}b{base + 2}"] = ent
-
-            is_fan = domain == "fan"
-            has_color = False
-            if domain == "light" and st:
-                modes = st.attributes.get("supported_color_modes", [])
-                mode_str = ",".join(modes).lower()
-                has_color = any(m in mode_str for m in ("hs", "rgb", "rgbw", "rgbww"))
-
-            if is_fan:
-                trigger_btn_id = base + 4
-                option_spec = {
-                    "entity": ent, "type": "fan", "origin_page": page,
-                    "page_id": alloc_option_page(), "friendly_name": label,
-                    "trigger_topic": f"p{page}b{trigger_btn_id}",
-                }
-                out.option_specs.append(option_spec)
-                status_id = base + 3
-                out.objects.append({"page": page, "obj": "label", "id": status_id, "x": x + 8,
-                                     "y": y + h - 36, "w": w - 16, "h": 28, "text": "Tap for speed",
-                                     "text_font": 20, "align": "center", "text_color": palette["label"],
-                                     "bg_opa": 0, "click": False})
-                out.fan_status_map.setdefault(ent, []).append((page, ("l", status_id)))
-                out.objects.append({"page": page, "obj": "btn", "id": trigger_btn_id, "x": x + 8,
-                                     "y": y + h - 36, "w": w - 16, "h": 28, "text": "", "toggle": 0,
-                                     "radius": 6, "bg_opa": 0, "border_width": 0})
-            elif domain == "light" and has_color:
-                trigger_btn_id = base + 4
-                option_spec = {
-                    "entity": ent, "type": "light_color", "origin_page": page,
-                    "page_id": alloc_option_page(), "friendly_name": label,
-                    "trigger_topic": f"p{page}b{trigger_btn_id}",
-                }
-                out.option_specs.append(option_spec)
-                hint_id = base + 3
-                out.objects.append({"page": page, "obj": "label", "id": hint_id, "x": x + 8,
-                                     "y": y + h - 36, "w": w - 16, "h": 28, "text": "Tap for color",
-                                     "text_font": 20, "align": "center", "text_color": palette["label"],
-                                     "bg_opa": 0, "click": False})
-                out.objects.append({"page": page, "obj": "btn", "id": trigger_btn_id, "x": x + 8,
-                                     "y": y + h - 36, "w": w - 16, "h": 28, "text": "", "toggle": 0,
-                                     "radius": 6, "bg_opa": 0, "border_width": 0})
-        elif domain == "cover" and layout == "shades_row":
+        if domain == "cover" and layout == "shades_row":
             # Overflow: more covers than shade slots, so this one lands in a
             # regular grid cell but still renders as a full-width shades bar.
+            # This legacy full-row-width behavior is specific to the
+            # template-slot renderer, so it's kept inline here rather than in
+            # the shared _dispatch_entity_content (which has its own, more
+            # generalized, in-own-rect cover rendering for render_tile_page).
             full_x = cell_xy(row, 0)[0]
             full_w = cell_wh(1, 3)[0]
             full_y = y + (h - 88) // 2
@@ -487,28 +437,234 @@ def render_page(
             out.matrix_map[f"p{page}m{mid}"] = mi
             out.ent_matrix_map.setdefault(ent, []).append((page, mid, mi))
             out.ctrl_map[f"p{page}b{base + 2}"] = ent
-        elif domain == "calendar":
-            icon_code = icon_overrides.get(key) or DEFAULT_CALENDAR_ICON
-            try:
-                icon_value = int(icon_code, 16)
-            except (TypeError, ValueError):
-                icon_value = int(DEFAULT_CALENDAR_ICON, 16)
-            icon = chr(icon_value)
-            out.objects.append({"page": page, "obj": "label", "id": base + 3, "x": x + 8,
-                                 "y": y + 34, "w": 32, "h": 32, "text": icon, "text_font": 28,
-                                 "text_color": palette["text"], "bg_opa": 0, "click": False})
-            summary_text = format_calendar_summary(st)
-            out.objects.append({"page": page, "obj": "btn", "id": base + 2, "x": x + 44, "y": y + 36,
-                                 "w": w - 52, "h": 44, "text": summary_text, "text_font": 16,
-                                 "text_color": palette["text"], "toggle": False, "bg_opa": 0,
-                                 "border_width": 0, "click": False})
-            out.sensor_map.setdefault(ent, []).append((page, base + 2))
         else:
-            val = display_state(st)
-            out.objects.append({"page": page, "obj": "btn", "id": base + 2, "x": bx, "y": by,
-                                 "w": 88, "h": 64, "text": val, "text_font": 20, "toggle": False,
-                                 "bg_opa": 0, "border_width": 0, "radius": 0})
-            out.sensor_map.setdefault(ent, []).append((page, base + 2))
+            _dispatch_entity_content(out, page, base, x, y, w, h, bx, by, ent, st, label,
+                                      icon_overrides.get(key), domain, alloc_option_page, palette)
+
+    return out
+
+
+def _dispatch_entity_content(
+    out: "PageRender",
+    page: int,
+    base: int,
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    bx: int,
+    by: int,
+    ent: str,
+    st: Any,
+    label: str,
+    icon_code: str | None,
+    domain: str,
+    alloc_option_page: Callable[[], int],
+    palette: dict,
+) -> None:
+    """Domain-specific tile content (toggle/popup/sensor/calendar/cover),
+    appended in place to `out`. The tile's own background+label must already
+    be drawn by the caller before calling this.
+
+    Shared by render_page() (which intercepts domain == "cover" itself for
+    its legacy shades_row full-width bar and never reaches the cover branch
+    here) and render_tile_page() (whose free-grid tiles use the cover branch
+    here, drawn inside the tile's own rect instead of a hardcoded full width).
+    """
+    if domain in ("switch", "light", "fan"):
+        icon_default = "E210" if domain == "fan" else "E425"
+        icon_resolved = icon_code or icon_default
+        try:
+            icon_value = int(icon_resolved, 16)
+        except (TypeError, ValueError):
+            icon_value = int("E425", 16)
+        icon = chr(icon_value)
+        out.objects.append({"page": page, "obj": "btn", "id": base + 2, "x": bx, "y": by,
+                             "w": 96, "h": 72, "text": icon, "text_font": 72, "toggle": True,
+                             "radius": 14, "bg_color": palette["tile_bg"], "bg_opa": 255,
+                             "text_color": palette["toggle_btn_text"], "border_width": 0})
+        out.ent_toggle_map.setdefault(ent, []).append((page, base + 2))
+        out.ctrl_map[f"p{page}b{base + 2}"] = ent
+
+        is_fan = domain == "fan"
+        has_color = False
+        if domain == "light" and st:
+            modes = st.attributes.get("supported_color_modes", [])
+            mode_str = ",".join(modes).lower()
+            has_color = any(m in mode_str for m in ("hs", "rgb", "rgbw", "rgbww"))
+
+        if is_fan:
+            trigger_btn_id = base + 4
+            option_spec = {
+                "entity": ent, "type": "fan", "origin_page": page,
+                "page_id": alloc_option_page(), "friendly_name": label,
+                "trigger_topic": f"p{page}b{trigger_btn_id}",
+            }
+            out.option_specs.append(option_spec)
+            status_id = base + 3
+            out.objects.append({"page": page, "obj": "label", "id": status_id, "x": x + 8,
+                                 "y": y + h - 36, "w": w - 16, "h": 28, "text": "Tap for speed",
+                                 "text_font": 20, "align": "center", "text_color": palette["label"],
+                                 "bg_opa": 0, "click": False})
+            out.fan_status_map.setdefault(ent, []).append((page, ("l", status_id)))
+            out.objects.append({"page": page, "obj": "btn", "id": trigger_btn_id, "x": x + 8,
+                                 "y": y + h - 36, "w": w - 16, "h": 28, "text": "", "toggle": 0,
+                                 "radius": 6, "bg_opa": 0, "border_width": 0})
+        elif domain == "light" and has_color:
+            trigger_btn_id = base + 4
+            option_spec = {
+                "entity": ent, "type": "light_color", "origin_page": page,
+                "page_id": alloc_option_page(), "friendly_name": label,
+                "trigger_topic": f"p{page}b{trigger_btn_id}",
+            }
+            out.option_specs.append(option_spec)
+            hint_id = base + 3
+            out.objects.append({"page": page, "obj": "label", "id": hint_id, "x": x + 8,
+                                 "y": y + h - 36, "w": w - 16, "h": 28, "text": "Tap for color",
+                                 "text_font": 20, "align": "center", "text_color": palette["label"],
+                                 "bg_opa": 0, "click": False})
+            out.objects.append({"page": page, "obj": "btn", "id": trigger_btn_id, "x": x + 8,
+                                 "y": y + h - 36, "w": w - 16, "h": 28, "text": "", "toggle": 0,
+                                 "radius": 6, "bg_opa": 0, "border_width": 0})
+    elif domain == "cover":
+        # Generalized in-own-rect cover control (arbitrary grid tiles have no
+        # concept of a hardcoded full-width "shades row").
+        mid = base + 7
+        matrix_y = min(y + max(36, (h - 40) // 2 + 18), y + h - 48)
+        out.objects.append({"page": page, "obj": "btnmatrix", "id": mid, "x": x + 12,
+                             "y": matrix_y, "w": max(60, w - 24), "h": 40, "text_font": 18,
+                             "options": ["Up", "Pause", "Down"], "one_check": 0, "radius": 10})
+        mi = {"type": "cover_cmd", "entity": ent}
+        out.matrix_map[f"p{page}m{mid}"] = mi
+        out.ent_matrix_map.setdefault(ent, []).append((page, mid, mi))
+    elif domain == "calendar":
+        icon_resolved = icon_code or DEFAULT_CALENDAR_ICON
+        try:
+            icon_value = int(icon_resolved, 16)
+        except (TypeError, ValueError):
+            icon_value = int(DEFAULT_CALENDAR_ICON, 16)
+        icon = chr(icon_value)
+        out.objects.append({"page": page, "obj": "label", "id": base + 3, "x": x + 8,
+                             "y": y + 34, "w": 32, "h": 32, "text": icon, "text_font": 28,
+                             "text_color": palette["text"], "bg_opa": 0, "click": False})
+        summary_text = format_calendar_summary(st)
+        out.objects.append({"page": page, "obj": "btn", "id": base + 2, "x": x + 44, "y": y + 36,
+                             "w": w - 52, "h": 44, "text": summary_text, "text_font": 16,
+                             "text_color": palette["text"], "toggle": False, "bg_opa": 0,
+                             "border_width": 0, "click": False})
+        out.sensor_map.setdefault(ent, []).append((page, base + 2))
+    else:
+        val = display_state(st)
+        out.objects.append({"page": page, "obj": "btn", "id": base + 2, "x": bx, "y": by,
+                             "w": 88, "h": 64, "text": val, "text_font": 20, "toggle": False,
+                             "bg_opa": 0, "border_width": 0, "radius": 0})
+        out.sensor_map.setdefault(ent, []).append((page, base + 2))
+
+
+# ---------------------------------------------------------------------------
+# Generalized grid + tile-list rendering — the new visual-builder model.
+# Pages here are plain dicts from pages_store.py (columns/rows/tiles), not
+# config entries. Geometry is intentionally separate from cell_xy/cell_wh
+# above (which stay fixed at the legacy 3x2 grid — existing tests assert
+# their literal output).
+# ---------------------------------------------------------------------------
+
+GRID_MARGIN_X = 24
+GRID_COL_GAP = 24
+GRID_ROW_GAP = 20
+
+# 8 ids reserved per tile (bg, label, control, hint/status, trigger, ...),
+# leaving 1..192 safely below the fixed 193..197 popup-overlay range that
+# __init__.py pre-arms on every page (see _publish_page_num).
+TILE_ID_BUDGET = 8
+MAX_TILES_PER_PAGE = 24
+
+
+@dataclass(frozen=True)
+class GridSpec:
+    """Pixel geometry for an arbitrary columns x rows grid on the tile-page
+    content area (the same header/footer bounds as the legacy grid)."""
+
+    columns: int
+    rows: int
+
+    def _col_width(self) -> float:
+        avail = 480 - 2 * GRID_MARGIN_X
+        return (avail - (self.columns - 1) * GRID_COL_GAP) / self.columns
+
+    def _row_height(self) -> float:
+        avail = GRID_FOOTER_Y - GRID_BASE_Y
+        return (avail - (self.rows - 1) * GRID_ROW_GAP) / self.rows
+
+    def xy(self, row: int, col: int) -> tuple[int, int]:
+        col_w = self._col_width()
+        row_h = self._row_height()
+        x = GRID_MARGIN_X + col * (col_w + GRID_COL_GAP)
+        y = GRID_BASE_Y + row * (row_h + GRID_ROW_GAP)
+        return (round(x), round(y))
+
+    def wh(self, rs: int, cs: int) -> tuple[int, int]:
+        col_w = self._col_width()
+        row_h = self._row_height()
+        w = col_w * cs + GRID_COL_GAP * (cs - 1)
+        h = row_h * rs + GRID_ROW_GAP * (rs - 1)
+        return (round(w), round(h))
+
+
+def tile_base_id(tile_index: int) -> int:
+    return 1 + tile_index * TILE_ID_BUDGET
+
+
+def render_tile_page(
+    page: int,
+    page_item: dict,
+    state_lookup: StateLookup,
+    alloc_option_page: Callable[[], int],
+    palette: dict = DARK_PALETTE,
+) -> PageRender:
+    """Render a visual-builder page (arbitrary grid, explicit tile list) —
+    the new-model counterpart to render_page()'s template-slot rendering.
+    `page_item` is a plain dict from pages_store.py: {columns, rows, tiles}.
+    Returns the same PageRender shape as render_page() so __init__.py's
+    publish plumbing doesn't care which renderer produced a given page.
+    """
+    out = PageRender()
+    columns = int(page_item.get("columns") or 3)
+    rows = int(page_item.get("rows") or 2)
+    grid = GridSpec(columns=columns, rows=rows)
+    tiles = page_item.get("tiles") or []
+
+    for tile_index, tile in enumerate(tiles[:MAX_TILES_PER_PAGE]):
+        tile_type = tile.get("type")
+        if tile_type != "entity":
+            # gauge/weather tile types arrive in later phases.
+            continue
+        ent = tile.get("entity_id")
+        if not ent:
+            continue
+
+        row = int(tile.get("row", 0))
+        col = int(tile.get("col", 0))
+        rs = int(tile.get("rs", 1))
+        cs = int(tile.get("cs", 1))
+        x, y = grid.xy(row, col)
+        w, h = grid.wh(rs, cs)
+        base = tile_base_id(tile_index)
+
+        st = state_lookup(ent)
+        label = st.attributes.get("friendly_name", ent) if st else ent
+        domain = ent.split(".")[0]
+
+        out.objects.append({"page": page, "obj": "obj", "id": base + 1, "x": x, "y": y, "w": w,
+                             "h": h, "radius": 14, "bg_color": palette["tile_bg"], "bg_opa": 255, "click": False})
+        out.objects.append({"page": page, "obj": "label", "id": base, "x": x + 8, "y": y + 6,
+                             "w": max(112, w - 16), "h": 24, "text": label, "text_font": 18,
+                             "text_color": palette["label"], "bg_opa": 0})
+
+        bx = x + max(20, (w - 96) // 2)
+        by = y + 36
+        _dispatch_entity_content(out, page, base, x, y, w, h, bx, by, ent, st, label,
+                                  tile.get("icon"), domain, alloc_option_page, palette)
 
     return out
 

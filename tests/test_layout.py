@@ -211,5 +211,112 @@ class OptionPageAllocatorTests(unittest.TestCase):
         self.assertEqual([alloc(), alloc(), alloc()], [50, 51, 52])
 
 
+class GridSpecTests(unittest.TestCase):
+    """Geometry for the new visual-builder grid — independent of, and must
+    not affect, the legacy cell_xy/cell_wh used by render_page()."""
+
+    def test_cells_stay_within_device_bounds(self):
+        grid = layout.GridSpec(columns=3, rows=2)
+        w, h = grid.wh(1, 1)
+        for row in range(2):
+            for col in range(3):
+                x, y = grid.xy(row, col)
+                self.assertGreaterEqual(x, 0)
+                self.assertGreaterEqual(y, 0)
+                self.assertLessEqual(x + w, 480)
+                self.assertLessEqual(y + h, layout.GRID_FOOTER_Y)
+
+    def test_columns_do_not_overlap(self):
+        grid = layout.GridSpec(columns=4, rows=1)
+        w, _ = grid.wh(1, 1)
+        xs = [grid.xy(0, c)[0] for c in range(4)]
+        for a, b in zip(xs, xs[1:]):
+            self.assertGreaterEqual(b, a + w)
+
+    def test_span_covers_multiple_cells(self):
+        grid = layout.GridSpec(columns=3, rows=2)
+        single_w, _ = grid.wh(1, 1)
+        span_w, _ = grid.wh(1, 3)
+        self.assertGreater(span_w, single_w * 2)
+
+
+class RenderTilePageTests(unittest.TestCase):
+    def setUp(self):
+        self.states = {
+            "switch.lamp": fake_state("on", friendly_name="Lamp"),
+            "light.color": fake_state("on", friendly_name="Color Light", supported_color_modes=["rgb"]),
+            "fan.bedroom": fake_state("on", friendly_name="Bedroom Fan"),
+            "sensor.temp": fake_state("72"),
+            "cover.blinds": fake_state("open", friendly_name="Blinds"),
+        }
+
+    def lookup(self, entity_id):
+        return self.states.get(entity_id)
+
+    def _page(self, tiles, columns=3, rows=2):
+        return {"columns": columns, "rows": rows, "tiles": tiles}
+
+    def test_entity_tile_json_roundtrip(self):
+        page = self._page([{"id": "t1", "type": "entity", "entity_id": "switch.lamp", "row": 0, "col": 0}])
+        alloc = layout.option_page_allocator(50)
+        render = layout.render_tile_page(2, page, self.lookup, alloc)
+        self.assertIn("switch.lamp", render.ent_toggle_map)
+        for obj in render.objects:
+            json.dumps(obj)
+
+    def test_sensor_tile_uses_display_state(self):
+        page = self._page([{"id": "t1", "type": "entity", "entity_id": "sensor.temp", "row": 0, "col": 0}])
+        alloc = layout.option_page_allocator(50)
+        render = layout.render_tile_page(2, page, self.lookup, alloc)
+        text_values = [o["text"] for o in render.objects if o.get("obj") == "btn" and "text" in o]
+        self.assertIn("72", text_values)
+
+    def test_cover_tile_renders_within_own_rect(self):
+        # Unlike render_page's legacy shades_row (a hardcoded full-width bar),
+        # a tile-page cover must stay inside its own cell so arbitrary grids
+        # don't get surprise full-row overlays.
+        page = self._page([{"id": "t1", "type": "entity", "entity_id": "cover.blinds", "row": 0, "col": 0}])
+        alloc = layout.option_page_allocator(50)
+        render = layout.render_tile_page(2, page, self.lookup, alloc)
+        self.assertIn("cover.blinds", render.ent_matrix_map)
+        matrix_objs = [o for o in render.objects if o.get("obj") == "btnmatrix"]
+        self.assertEqual(len(matrix_objs), 1)
+        cell_w, _ = layout.GridSpec(columns=3, rows=2).wh(1, 1)
+        self.assertLessEqual(matrix_objs[0]["w"], cell_w)
+
+    def test_fan_tile_registers_option_page(self):
+        page = self._page([{"id": "t1", "type": "entity", "entity_id": "fan.bedroom", "row": 0, "col": 0}])
+        alloc = layout.option_page_allocator(50)
+        render = layout.render_tile_page(2, page, self.lookup, alloc)
+        self.assertEqual(len(render.option_specs), 1)
+        self.assertEqual(render.option_specs[0]["type"], "fan")
+
+    def test_unknown_tile_type_skipped_without_error(self):
+        page = self._page([{"id": "t1", "type": "gauge", "entity_id": "sensor.temp", "row": 0, "col": 0}])
+        alloc = layout.option_page_allocator(50)
+        render = layout.render_tile_page(2, page, self.lookup, alloc)
+        self.assertEqual(render.objects, [])
+
+    def test_tile_ids_do_not_collide_across_tiles(self):
+        tiles = [
+            {"id": f"t{i}", "type": "entity", "entity_id": "switch.lamp", "row": 0, "col": i % 3}
+            for i in range(5)
+        ]
+        page = self._page(tiles)
+        alloc = layout.option_page_allocator(50)
+        render = layout.render_tile_page(2, page, self.lookup, alloc)
+        ids = [o["id"] for o in render.objects]
+        self.assertEqual(len(ids), len(set(ids)))
+
+    def test_tile_base_id_sequential_and_clear_of_popup_overlay_range(self):
+        bases = [layout.tile_base_id(i) for i in range(layout.MAX_TILES_PER_PAGE)]
+        self.assertEqual(bases[0], 1)
+        self.assertEqual(bases[1], 1 + layout.TILE_ID_BUDGET)
+        # __init__.py pre-arms popup-overlay chrome at ids 193..197 on every
+        # page (see _publish_page_num) — the highest id used by the last
+        # tile (base + budget - 1) must never reach that far.
+        self.assertLess(bases[-1] + layout.TILE_ID_BUDGET - 1, 193)
+
+
 if __name__ == "__main__":
     unittest.main()
