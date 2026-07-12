@@ -303,6 +303,7 @@ def render_page(
                                  "radius": 14, "bg_color": TILE_BG, "bg_opa": 255,
                                  "text_color": "#FFFFFF", "border_width": 0})
             out.ent_toggle_map.setdefault(ent, []).append((page, base + 2))
+            out.ctrl_map[f"p{page}b{base + 2}"] = ent
 
             is_fan = domain == "fan"
             has_color = False
