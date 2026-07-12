@@ -256,7 +256,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             f'{{"page":{p},"obj":"btn","id":197,"x":316,"y":312,"w":92,"h":36,"text":"Close","text_font":18,"radius":10,"bg_color":"#374151","text_color":"#FFFFFF","border_width":0,"hidden":1}}',
         ]:
             await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", line)
-        hass.data[DOMAIN][entry.entry_id].setdefault("popup_overlay_targets", {})[p] = [("b",193),("o",194),("l",195),("m",196),("b",197)]
+        # Reset (not pre-arm) overlay bookkeeping: no popup is open right after
+        # a fresh publish, so this must start empty or the very next tile tap
+        # gets misread by _state_event as "dismiss the open popup" and swallowed.
+        hass.data[DOMAIN][entry.entry_id].setdefault("popup_overlay_targets", {})[p] = []
         popup_map = hass.data[DOMAIN][entry.entry_id].setdefault("popup_map", {})
         popup_map[f"p{p}b193"] = {"type": "close_popup", "page": p}
         popup_map[f"p{p}b197"] = {"type": "close_popup", "page": p}
