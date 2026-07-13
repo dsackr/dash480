@@ -327,7 +327,7 @@ def header_footer_objects(
         {"page": 0, "id": 2, "obj": "btn", "x": 140, "y": 8, "w": 200, "h": 40,
          "text": title, "text_font": 35, "text_color": palette["header_title_text"], "bg_opa": 0,
          "border_width": 0, "radius": 0, "outline_width": 0, "shadow_width": 0,
-         "toggle": False, "mode": "dots"},
+         "toggle": False, "mode": "dots", "align": "center"},
         {"page": 0, "id": 3, "obj": "btn", "x": 320, "y": 8, "w": 148, "h": 40,
          "text": temp_text or "--", "text_font": 24, "align": "right",
          "text_color": palette["text"], "bg_opa": 0, "border_width": 0, "radius": 0,
