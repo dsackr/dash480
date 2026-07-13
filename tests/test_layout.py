@@ -187,22 +187,24 @@ class OptionPageTests(unittest.TestCase):
         self.assertEqual(ids, [80, 81, 82, 83, 84, 85])
 
 
-class HomeLayoutTests(unittest.TestCase):
+class HeaderFooterTests(unittest.TestCase):
     def test_title_and_temp_survive_quotes(self):
-        objects = layout.home_layout_objects("plate", 'Dash "Home"', "72°")
+        objects = layout.header_footer_objects("plate", 'Dash "Home"', "72°")
         for obj in objects:
             json.dumps(obj)  # must not raise
         title_obj = next(o for o in objects if o.get("id") == 2 and o.get("page") == 0)
         self.assertEqual(title_obj["text"], 'Dash "Home"')
 
     def test_nav_icons_survive_json_roundtrip(self):
-        objects = layout.home_layout_objects("plate", "Dash", "--")
-        nav_ids = {90: "", 91: "", 92: ""}
-        for obj in objects:
-            if obj.get("page") == 0 and obj.get("id") in nav_ids:
-                wire = json.dumps(obj)
-                decoded = json.loads(wire)
-                self.assertEqual(decoded["text"], nav_ids[obj["id"]])
+        objects = layout.header_footer_objects("plate", "Dash", "--")
+        nav_objs = [o for o in objects if o.get("page") == 0 and o.get("id") in (90, 91, 92)]
+        self.assertEqual(len(nav_objs), 3)
+        for obj in nav_objs:
+            # HASP-font glyphs are private-use-area chars; they must decode
+            # back identically from the JSON wire format.
+            self.assertTrue(obj["text"])
+            decoded = json.loads(json.dumps(obj))
+            self.assertEqual(decoded["text"], obj["text"])
 
 
 class OptionPageAllocatorTests(unittest.TestCase):

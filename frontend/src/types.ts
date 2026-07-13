@@ -20,7 +20,7 @@ export interface Panel {
 
 export interface VisualTile {
   id: string;
-  type: "entity" | "gauge" | "weather";
+  type: TileType;
   entity_id?: string;
   row: number;
   col: number;
@@ -56,7 +56,24 @@ export interface CompatibleEntity {
   entity_id: string;
   friendly_name: string;
   domain: string;
+  // Present on gauge-compatible entities only — used for min/max defaults.
+  unit_of_measurement?: string | null;
+  device_class?: string | null;
 }
+
+export interface IconChoice {
+  label: string;
+  code: string;
+}
+
+export type TileType = "entity" | "gauge" | "weather";
+
+// What the editor's inspector is focused on: nothing (page settings),
+// an empty cell (add-tile form), or an existing tile (its properties).
+export type Selection =
+  | { kind: "none" }
+  | { kind: "cell"; row: number; col: number }
+  | { kind: "tile"; tileId: string };
 
 export interface Area {
   area_id: string;

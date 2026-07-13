@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
+from .const import DOMAIN, ICON_CHOICES
 
 
 ALLOWED_DOMAINS = {"switch", "light", "fan", "sensor", "cover", "calendar"}
@@ -286,19 +286,6 @@ class Dash480RemoveSlotSelect(SelectEntity):
             except Exception:
                 pass
             self._unsub_update = None
-
-
-ICON_CHOICES = [
-    ("Power (E425)", "E425"),
-    ("Fan (E210)", "E210"),
-    ("Light (E335)", "E335"),
-    ("Up (E143)", "E143"),
-    ("Stop (E4DB)", "E4DB"),
-    ("Down (E140)", "E140"),
-    # Placeholder, unverified against the actual font on the device — correct
-    # via this picker if it doesn't render as a calendar glyph.
-    ("Calendar (E1C0)", "E1C0"),
-]
 
 
 class Dash480SlotIconSelect(SelectEntity):

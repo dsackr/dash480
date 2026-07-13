@@ -17,8 +17,8 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er
 
-from .const import DOMAIN
-from .layout import GridSpec
+from .const import DOMAIN, ICON_CHOICES
+from .layout import MAX_TILES_PER_PAGE, GridSpec
 from .pages_store import (
     DEFAULT_COLUMNS,
     DEFAULT_ROWS,
@@ -287,6 +287,17 @@ async def ws_render_preview(hass: HomeAssistant, connection, msg: dict) -> None:
 
 
 @websocket_api.require_admin
+@websocket_api.websocket_command({vol.Required("type"): "dash480/registry/icons"})
+@websocket_api.async_response
+async def ws_list_icons(hass: HomeAssistant, connection, msg: dict) -> None:
+    """Icon overrides available for entity tiles (shared with the legacy
+    per-slot icon select — see const.ICON_CHOICES)."""
+    connection.send_result(msg["id"], {
+        "icons": [{"label": label, "code": code} for label, code in ICON_CHOICES],
+    })
+
+
+@websocket_api.require_admin
 @websocket_api.websocket_command({vol.Required("type"): "dash480/registry/areas"})
 @websocket_api.async_response
 async def ws_list_areas(hass: HomeAssistant, connection, msg: dict) -> None:
@@ -383,13 +394,24 @@ async def ws_generate_from_area(hass: HomeAssistant, connection, msg: dict) -> N
         if page is None:
             connection.send_error(msg["id"], "not_found", "Unknown target_page_id")
             return
-        occupied = {(t.get("row", 0), t.get("col", 0)) for t in page["tiles"]}
+        # Expand rs/cs spans — the visual editor can resize tiles, so a
+        # tile's anchor cell alone doesn't describe what it covers.
+        occupied = set()
+        for t in page["tiles"]:
+            row0, col0 = int(t.get("row", 0)), int(t.get("col", 0))
+            for r in range(row0, row0 + int(t.get("rs") or 1)):
+                for c in range(col0, col0 + int(t.get("cs") or 1)):
+                    occupied.add((r, c))
         free_cells = [
             (r, c)
             for r in range(page["rows"])
             for c in range(page["columns"])
             if (r, c) not in occupied
         ]
+        # The renderer silently drops tiles beyond MAX_TILES_PER_PAGE; don't
+        # create tiles the device would never show — report them as skipped.
+        capacity = max(0, MAX_TILES_PER_PAGE - len(page["tiles"]))
+        free_cells = free_cells[:capacity]
         new_tiles = list(page["tiles"])
         for (entity_id, tile_type), (r, c) in zip(candidates, free_cells):
             new_tiles.append({
@@ -455,6 +477,7 @@ def async_register(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_publish)
     websocket_api.async_register_command(hass, ws_compatible_entities)
     websocket_api.async_register_command(hass, ws_render_preview)
+    websocket_api.async_register_command(hass, ws_list_icons)
     websocket_api.async_register_command(hass, ws_list_areas)
     websocket_api.async_register_command(hass, ws_entities_for_area)
     websocket_api.async_register_command(hass, ws_generate_from_area)

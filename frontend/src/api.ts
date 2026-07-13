@@ -3,6 +3,7 @@ import type {
   CompatibleEntity,
   GenerateFromAreaResult,
   HomeAssistant,
+  IconChoice,
   Panel,
   PreviewTile,
   VisualPage,
@@ -60,11 +61,35 @@ export const renderPreview = (
     page_draft: draft,
   });
 
-export const compatibleEntities = (hass: HomeAssistant, tileType: string) =>
-  call<{ entities: CompatibleEntity[] }>(hass, {
+// The inspector and its embedded entity-select both need the compatible
+// list for the same tile type at the same moment — a short-lived cache
+// collapses those into one round-trip (entity states barely move on the
+// timescale of a single editing gesture).
+const COMPAT_CACHE_MS = 10_000;
+const compatCache = new Map<string, { at: number; result: Promise<{ entities: CompatibleEntity[] }> }>();
+
+export const compatibleEntities = (hass: HomeAssistant, tileType: string) => {
+  const hit = compatCache.get(tileType);
+  if (hit && Date.now() - hit.at < COMPAT_CACHE_MS) return hit.result;
+  const result = call<{ entities: CompatibleEntity[] }>(hass, {
     type: "dash480/registry/compatible_entities",
     tile_type: tileType,
   });
+  compatCache.set(tileType, { at: Date.now(), result });
+  result.catch(() => compatCache.delete(tileType));
+  return result;
+};
+
+// Static per-install list — fetch once per page load.
+let iconsCache: Promise<{ icons: IconChoice[] }> | null = null;
+
+export const listIcons = (hass: HomeAssistant) => {
+  if (!iconsCache) {
+    iconsCache = call<{ icons: IconChoice[] }>(hass, { type: "dash480/registry/icons" });
+    iconsCache.catch(() => (iconsCache = null));
+  }
+  return iconsCache;
+};
 
 export const listAreas = (hass: HomeAssistant) =>
   call<{ areas: Area[] }>(hass, { type: "dash480/registry/areas" });
