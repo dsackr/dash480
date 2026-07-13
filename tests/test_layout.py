@@ -291,11 +291,54 @@ class RenderTilePageTests(unittest.TestCase):
         self.assertEqual(len(render.option_specs), 1)
         self.assertEqual(render.option_specs[0]["type"], "fan")
 
-    def test_unknown_tile_type_skipped_without_error(self):
-        page = self._page([{"id": "t1", "type": "gauge", "entity_id": "sensor.temp", "row": 0, "col": 0}])
+    def test_unimplemented_tile_type_skipped_without_error(self):
+        page = self._page([{"id": "t1", "type": "weather", "entity_id": "weather.home", "row": 0, "col": 0}])
         alloc = layout.option_page_allocator(50)
         render = layout.render_tile_page(2, page, self.lookup, alloc)
         self.assertEqual(render.objects, [])
+
+    def test_gauge_tile_json_roundtrip_and_arc_value(self):
+        page = self._page([{"id": "t1", "type": "gauge", "entity_id": "sensor.temp", "row": 0, "col": 0,
+                             "min": 0, "max": 100}])
+        alloc = layout.option_page_allocator(50)
+        render = layout.render_tile_page(2, page, self.lookup, alloc)
+        self.assertIn("sensor.temp", render.gauge_map)
+        for obj in render.objects:
+            json.dumps(obj)
+        arc = next(o for o in render.objects if o.get("obj") == "arc")
+        self.assertEqual(arc["min"], 0)
+        self.assertEqual(arc["max"], 100)
+        self.assertEqual(arc["val"], 72)
+        value_label = next(o for o in render.objects if o.get("obj") == "label" and o.get("align") == "center")
+        self.assertEqual(value_label["text"], "72")
+
+    def test_gauge_tile_clamps_out_of_range_value(self):
+        self.states["sensor.temp"] = fake_state("999")
+        page = self._page([{"id": "t1", "type": "gauge", "entity_id": "sensor.temp", "row": 0, "col": 0,
+                             "min": 0, "max": 100}])
+        alloc = layout.option_page_allocator(50)
+        render = layout.render_tile_page(2, page, self.lookup, alloc)
+        arc = next(o for o in render.objects if o.get("obj") == "arc")
+        self.assertEqual(arc["val"], 100)
+
+    def test_gauge_tile_unavailable_renders_dashes_and_min_value(self):
+        self.states["sensor.temp"] = fake_state("unavailable")
+        page = self._page([{"id": "t1", "type": "gauge", "entity_id": "sensor.temp", "row": 0, "col": 0,
+                             "min": 10, "max": 100}])
+        alloc = layout.option_page_allocator(50)
+        render = layout.render_tile_page(2, page, self.lookup, alloc)
+        arc = next(o for o in render.objects if o.get("obj") == "arc")
+        self.assertEqual(arc["val"], 10)
+        value_label = next(o for o in render.objects if o.get("obj") == "label" and o.get("align") == "center")
+        self.assertEqual(value_label["text"], "--")
+
+    def test_gauge_tile_shows_unit_of_measurement(self):
+        self.states["sensor.temp"] = fake_state("72", unit_of_measurement="°F")
+        page = self._page([{"id": "t1", "type": "gauge", "entity_id": "sensor.temp", "row": 0, "col": 0}])
+        alloc = layout.option_page_allocator(50)
+        render = layout.render_tile_page(2, page, self.lookup, alloc)
+        value_label = next(o for o in render.objects if o.get("obj") == "label" and o.get("align") == "center")
+        self.assertEqual(value_label["text"], "72°F")
 
     def test_tile_ids_do_not_collide_across_tiles(self):
         tiles = [

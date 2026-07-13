@@ -1,6 +1,6 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { HomeAssistant, Panel, VisualPage, PreviewTile } from "./types";
+import type { HomeAssistant, Panel, VisualPage, VisualTile, PreviewTile } from "./types";
 import {
   listPanels,
   listPages,
@@ -28,7 +28,8 @@ export class Dash480Panel extends LitElement {
   @state() private _editingPage: VisualPage | null = null;
   @state() private _previewTiles: PreviewTile[] = [];
   @state() private _newPageTitle = "";
-  @state() private _pickerOpenFor: { row: number; col: number } | null = null;
+  @state() private _typePickerOpenFor: { row: number; col: number } | null = null;
+  @state() private _pickerOpenFor: { row: number; col: number; type: "entity" | "gauge" } | null = null;
   @state() private _status = "";
 
   connectedCallback(): void {
@@ -105,21 +106,34 @@ export class Dash480Panel extends LitElement {
   }
 
   private _addTileAt(row: number, col: number) {
-    this._pickerOpenFor = { row, col };
+    this._typePickerOpenFor = { row, col };
+  }
+
+  private _chooseTileType(type: "entity" | "gauge") {
+    if (!this._typePickerOpenFor) return;
+    this._pickerOpenFor = { ...this._typePickerOpenFor, type };
+    this._typePickerOpenFor = null;
   }
 
   private async _onEntityPicked(e: CustomEvent<{ entity_id: string }>) {
     if (!this._editingPage || !this._pickerOpenFor) return;
-    const { row, col } = this._pickerOpenFor;
-    const tile = {
+    const { row, col, type } = this._pickerOpenFor;
+    const baseTile = {
       id: `t${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-      type: "entity" as const,
       entity_id: e.detail.entity_id,
       row,
       col,
       rs: 1,
       cs: 1,
     };
+    let tile: VisualTile;
+    if (type === "gauge") {
+      const min = Number(window.prompt("Minimum value", "0") ?? "0");
+      const max = Number(window.prompt("Maximum value", "100") ?? "100");
+      tile = { ...baseTile, type: "gauge", min: Number.isFinite(min) ? min : 0, max: Number.isFinite(max) ? max : 100 };
+    } else {
+      tile = { ...baseTile, type: "entity" };
+    }
     this._editingPage = {
       ...this._editingPage,
       tiles: [
@@ -222,23 +236,49 @@ export class Dash480Panel extends LitElement {
           )}
           ${this._previewTiles.map((t) => {
             const tile = page.tiles.find((pt) => pt.id === t.id);
+            const isGauge = tile?.type === "gauge";
+            let pct = 0;
+            if (isGauge && tile) {
+              const min = tile.min ?? 0;
+              const max = tile.max ?? 100;
+              const raw = Number(t.state);
+              if (!Number.isNaN(raw) && max > min) {
+                pct = Math.max(0, Math.min(100, ((raw - min) / (max - min)) * 100));
+              }
+            }
             return html`
               <div class="tile" style="left:${t.x}px;top:${t.y}px;width:${t.w}px;height:${t.h}px;">
                 <div class="tile-label">${t.friendly_name}</div>
-                <div class="tile-state">${t.state ?? "--"}</div>
+                ${isGauge
+                  ? html`
+                      <div class="gauge-ring" style="background: conic-gradient(#38bdf8 ${pct * 3.6}deg, #334155 0deg);">
+                        <div class="gauge-ring-inner">${t.state ?? "--"}</div>
+                      </div>
+                    `
+                  : html`<div class="tile-state">${t.state ?? "--"}</div>`}
                 <button class="tile-remove" @click=${() => tile && this._removeTile(tile.id)}>×</button>
               </div>
             `;
           })}
         </div>
         <p class="hint">
-          Click an empty cell to add an entity tile. Positions are approximate — verify on the real device.
+          Click an empty cell to add a tile. Positions are approximate — verify on the real device.
         </p>
+        ${this._typePickerOpenFor
+          ? html`
+              <div class="backdrop" @click=${() => (this._typePickerOpenFor = null)}>
+                <div class="type-chooser" @click=${(e: Event) => e.stopPropagation()}>
+                  <button @click=${() => this._chooseTileType("entity")}>Entity Tile</button>
+                  <button @click=${() => this._chooseTileType("gauge")}>Gauge Tile</button>
+                </div>
+              </div>
+            `
+          : nothing}
         ${this._pickerOpenFor
           ? html`
               <dash480-entity-picker
                 .hass=${this.hass}
-                tileType="entity"
+                .tileType=${this._pickerOpenFor.type}
                 @entity-picked=${this._onEntityPicked}
                 @picker-closed=${() => (this._pickerOpenFor = null)}
               ></dash480-entity-picker>
@@ -336,6 +376,54 @@ export class Dash480Panel extends LitElement {
       border: none;
       color: #e5e7eb;
       cursor: pointer;
+    }
+    .gauge-ring {
+      width: 60%;
+      aspect-ratio: 1;
+      margin: 8px auto 0;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .gauge-ring-inner {
+      width: 68%;
+      aspect-ratio: 1;
+      border-radius: 50%;
+      background: #1e293b;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      text-align: center;
+    }
+    .backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+    .type-chooser {
+      background: var(--card-background-color, #1e1e1e);
+      border-radius: 8px;
+      padding: 16px;
+      display: flex;
+      gap: 12px;
+    }
+    .type-chooser button {
+      padding: 12px 20px;
+      border-radius: 8px;
+      border: none;
+      background: #334155;
+      color: #e5e7eb;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .type-chooser button:hover {
+      background: #475569;
     }
     .hint {
       opacity: 0.6;

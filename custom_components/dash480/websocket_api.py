@@ -30,6 +30,19 @@ from .pages_store import (
 # get their own tile types and compatibility lists in a later phase).
 ENTITY_TILE_DOMAINS = {"switch", "light", "fan", "sensor", "cover", "calendar"}
 
+# A gauge is for any numeric entity with a meaningful range — sensor domain
+# is filtered to states that actually parse as a number (excludes text/enum
+# sensors); number/input_number entities are inherently numeric.
+GAUGE_TILE_DOMAINS = {"sensor", "number", "input_number"}
+
+
+def _is_numeric_state(state) -> bool:
+    try:
+        float(state.state)
+        return True
+    except (TypeError, ValueError):
+        return False
+
 
 @websocket_api.require_admin
 @websocket_api.websocket_command({vol.Required("type"): "dash480/panels/list"})
@@ -162,19 +175,32 @@ async def ws_publish(hass: HomeAssistant, connection, msg: dict) -> None:
 })
 @websocket_api.async_response
 async def ws_compatible_entities(hass: HomeAssistant, connection, msg: dict) -> None:
-    if msg["tile_type"] != "entity":
-        # gauge/weather compatibility lists arrive alongside those tile types.
-        connection.send_result(msg["id"], {"entities": []})
-        return
-    entities = [
-        {
-            "entity_id": state.entity_id,
-            "friendly_name": state.attributes.get("friendly_name", state.entity_id),
-            "domain": state.domain,
-        }
-        for state in hass.states.async_all()
-        if state.domain in ENTITY_TILE_DOMAINS
-    ]
+    tile_type = msg["tile_type"]
+    if tile_type == "entity":
+        entities = [
+            {
+                "entity_id": state.entity_id,
+                "friendly_name": state.attributes.get("friendly_name", state.entity_id),
+                "domain": state.domain,
+            }
+            for state in hass.states.async_all()
+            if state.domain in ENTITY_TILE_DOMAINS
+        ]
+    elif tile_type == "gauge":
+        entities = [
+            {
+                "entity_id": state.entity_id,
+                "friendly_name": state.attributes.get("friendly_name", state.entity_id),
+                "domain": state.domain,
+                "unit_of_measurement": state.attributes.get("unit_of_measurement"),
+                "device_class": state.attributes.get("device_class"),
+            }
+            for state in hass.states.async_all()
+            if state.domain in GAUGE_TILE_DOMAINS and _is_numeric_state(state)
+        ]
+    else:
+        # weather tile-type compatibility list arrives in a later phase.
+        entities = []
     entities.sort(key=lambda e: e["friendly_name"].lower())
     connection.send_result(msg["id"], {"entities": entities})
 

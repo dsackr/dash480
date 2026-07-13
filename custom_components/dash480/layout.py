@@ -45,6 +45,8 @@ DARK_PALETTE = {
     "toggle_btn_text": "#FFFFFF",
     "option_close_bg": "#1F2937",
     "option_close_text": "#FFFFFF",
+    "gauge_arc": "#38BDF8",
+    "gauge_track": "#334155",
 }
 
 LIGHT_PALETTE = {
@@ -61,6 +63,8 @@ LIGHT_PALETTE = {
     "toggle_btn_text": "#0F172A",
     "option_close_bg": "#E2E8F0",
     "option_close_text": "#0F172A",
+    "gauge_arc": "#0284C7",
+    "gauge_track": "#CBD5E1",
 }
 
 PALETTES = {"dark": DARK_PALETTE, "light": LIGHT_PALETTE}
@@ -87,6 +91,29 @@ UNAVAILABLE_STATES = (None, "", "unknown", "unavailable")
 def display_state(state: Any) -> str:
     """Human-displayable text for an HA state object, or '--' if unset/unavailable."""
     return str(state.state) if state and state.state not in UNAVAILABLE_STATES else "--"
+
+
+def gauge_display_value(state: Any) -> str:
+    """'<state><unit>' for a gauge tile's centered value label, or '--' if unset/unavailable.
+
+    Not always a percentage — a gauge is for any numeric sensor with a
+    meaningful range, so this shows the entity's own unit_of_measurement
+    (e.g. "72°F", "45%", "3.2 kWh"), not an assumed "%".
+    """
+    if not state or state.state in UNAVAILABLE_STATES:
+        return "--"
+    unit = state.attributes.get("unit_of_measurement") or ""
+    return f"{state.state}{unit}"
+
+
+def gauge_arc_value(state: Any, gmin: float, gmax: float) -> float:
+    """Numeric value clamped to [gmin, gmax] for the arc's `val`, or gmin if unset/unavailable/non-numeric."""
+    if state and state.state not in UNAVAILABLE_STATES:
+        try:
+            return max(gmin, min(gmax, float(state.state)))
+        except (TypeError, ValueError):
+            pass
+    return gmin
 
 
 # Placeholder codepoint (unverified against the actual font flashed to the
@@ -340,6 +367,10 @@ class PageRender:
     matrix_map: dict[str, dict] = field(default_factory=dict)
     fan_status_map: dict[str, list[tuple[int, tuple[str, int]]]] = field(default_factory=dict)
     option_specs: list[dict] = field(default_factory=list)
+    # entity -> list of (page, arc_id, value_label_id, min, max) — a gauge
+    # tile's live-update needs both the arc's .val and the label's .text
+    # kept in sync, unlike a plain sensor tile's single .text update.
+    gauge_map: dict[str, list[tuple[int, int, int, float, float]]] = field(default_factory=dict)
 
 
 def render_page(
@@ -636,8 +667,8 @@ def render_tile_page(
 
     for tile_index, tile in enumerate(tiles[:MAX_TILES_PER_PAGE]):
         tile_type = tile.get("type")
-        if tile_type != "entity":
-            # gauge/weather tile types arrive in later phases.
+        if tile_type not in ("entity", "gauge"):
+            # weather tile type arrives in a later phase.
             continue
         ent = tile.get("entity_id")
         if not ent:
@@ -653,7 +684,6 @@ def render_tile_page(
 
         st = state_lookup(ent)
         label = st.attributes.get("friendly_name", ent) if st else ent
-        domain = ent.split(".")[0]
 
         out.objects.append({"page": page, "obj": "obj", "id": base + 1, "x": x, "y": y, "w": w,
                              "h": h, "radius": 14, "bg_color": palette["tile_bg"], "bg_opa": 255, "click": False})
@@ -661,6 +691,30 @@ def render_tile_page(
                              "w": max(112, w - 16), "h": 24, "text": label, "text_font": 18,
                              "text_color": palette["label"], "bg_opa": 0})
 
+        if tile_type == "gauge":
+            gmin = float(tile.get("min", 0))
+            gmax = float(tile.get("max", 100))
+            if gmax <= gmin:
+                gmax = gmin + 1  # defensive: never emit a zero/negative arc span
+            val = gauge_arc_value(st, gmin, gmax)
+
+            arc_size = max(40, min(w, h - 34) - 20)
+            arc_x = x + (w - arc_size) // 2
+            arc_y = y + 34
+            arc_id = base + 2
+            out.objects.append({"page": page, "obj": "arc", "id": arc_id, "x": arc_x, "y": arc_y,
+                                 "w": arc_size, "h": arc_size, "min": gmin, "max": gmax, "val": val,
+                                 "start_angle": 135, "end_angle": 45, "rotation": 0, "type": "normal",
+                                 "arc_color": palette["gauge_arc"], "bg_color": palette["gauge_track"]})
+            value_label_id = base + 3
+            out.objects.append({"page": page, "obj": "label", "id": value_label_id, "x": arc_x,
+                                 "y": arc_y + arc_size // 2 - 14, "w": arc_size, "h": 28,
+                                 "text": gauge_display_value(st), "text_font": 24, "align": "center",
+                                 "text_color": palette["text"], "bg_opa": 0})
+            out.gauge_map.setdefault(ent, []).append((page, arc_id, value_label_id, gmin, gmax))
+            continue
+
+        domain = ent.split(".")[0]
         bx = x + max(20, (w - 96) // 2)
         by = y + 36
         _dispatch_entity_content(out, page, base, x, y, w, h, bx, by, ent, st, label,

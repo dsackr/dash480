@@ -19,6 +19,8 @@ from .layout import (
     build_page_ring,
     display_state,
     format_calendar_summary,
+    gauge_arc_value,
+    gauge_display_value,
     header_footer_objects,
     home_fallback_objects,
     option_page_allocator,
@@ -355,6 +357,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         option_specs: list,
         option_open_map: dict,
         fan_status_map: dict,
+        gauge_map: dict,
         alloc_option_page,
         palette: dict,
     ) -> None:
@@ -415,6 +418,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             ent_matrix_map.setdefault(ent, []).extend(targets)
         for ent, targets in render.fan_status_map.items():
             fan_status_map.setdefault(ent, []).extend(targets)
+        for ent, targets in render.gauge_map.items():
+            gauge_map.setdefault(ent, []).extend(targets)
         for option_spec in render.option_specs:
             option_specs.append(option_spec)
             option_open_map[option_spec["trigger_topic"]] = option_spec
@@ -484,6 +489,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         ent_matrix_map: dict[str, list[tuple[int, int, dict]]] = {}
         color_btn_map: dict[str, dict] = {}
         fan_status_map: dict[str, list[tuple[int, tuple[str, int]]]] = {}
+        gauge_map: dict[str, list[tuple[int, int, int, float, float]]] = {}
         option_specs: list[dict] = []
         option_open_map: dict[str, dict] = {}
         alloc_option_page = option_page_allocator(50)
@@ -502,6 +508,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 option_specs,
                 option_open_map,
                 fan_status_map,
+                gauge_map,
                 alloc_option_page,
                 palette,
             )
@@ -520,6 +527,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN][entry.entry_id]["ent_matrix_map"] = ent_matrix_map
         hass.data[DOMAIN][entry.entry_id]["color_btn_map"] = color_btn_map
         hass.data[DOMAIN][entry.entry_id]["fan_status_map"] = fan_status_map
+        hass.data[DOMAIN][entry.entry_id]["gauge_map"] = gauge_map
         # rewire toggle/matrix listeners
         for key in list(hass.data[DOMAIN][entry.entry_id].keys()):
             if key.startswith("unsub_ent_"):
@@ -605,6 +613,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             cb = await _make_cb(ent)
             unsub = async_track_state_change_event(hass, [ent], cb)
             hass.data[DOMAIN][entry.entry_id][f"unsub_sensor_{ent}"] = unsub
+
+        # rewire gauge listeners — a gauge needs both the arc's .val and the
+        # value label's .text kept in sync, unlike a plain sensor's single
+        # .text update, so it gets its own map/subscription pair.
+        for key in list(hass.data[DOMAIN][entry.entry_id].keys()):
+            if key.startswith("unsub_gauge_"):
+                u = hass.data[DOMAIN][entry.entry_id].pop(key)
+                try:
+                    u()
+                except Exception:
+                    pass
+        for ent in gauge_map:
+            def _make_gauge_cb(eid: str):
+                async def _cb(event):
+                    state = hass.states.get(eid)
+                    for (pnum, arc_id, label_id, gmin, gmax) in gauge_map.get(eid, []):
+                        val = gauge_arc_value(state, gmin, gmax)
+                        await mqtt.async_publish(hass, f"hasp/{node_name}/command/p{pnum}b{arc_id}.val", str(val))
+                        await mqtt.async_publish(
+                            hass, f"hasp/{node_name}/command/p{pnum}b{label_id}.text", gauge_display_value(state)
+                        )
+                return _cb
+            cb = _make_gauge_cb(ent)
+            unsub = async_track_state_change_event(hass, [ent], cb)
+            hass.data[DOMAIN][entry.entry_id][f"unsub_gauge_{ent}"] = unsub
 
     # Define the callback for when the device comes online
     @callback
