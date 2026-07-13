@@ -327,7 +327,7 @@ def header_footer_objects(
         {"page": 0, "id": 2, "obj": "btn", "x": 140, "y": 8, "w": 200, "h": 40,
          "text": title, "text_font": 35, "text_color": palette["header_title_text"], "bg_opa": 0,
          "border_width": 0, "radius": 0, "outline_width": 0, "shadow_width": 0,
-         "toggle": False},
+         "toggle": False, "mode": "dots"},
         {"page": 0, "id": 3, "obj": "btn", "x": 320, "y": 8, "w": 148, "h": 40,
          "text": temp_text or "--", "text_font": 24, "align": "right",
          "text_color": palette["text"], "bg_opa": 0, "border_width": 0, "radius": 0,
@@ -470,7 +470,7 @@ def render_page(
                                  "y": full_y, "w": full_w, "h": 88, "radius": 18, "bg_color": palette["bg"]})
             out.objects.append({"page": page, "obj": "label", "id": base + 6, "x": full_x + 18,
                                  "y": full_y + 12, "w": full_w - 36, "h": 24, "text": label,
-                                 "text_font": 20, "text_color": palette["label"], "bg_opa": 0})
+                                 "text_font": 20, "text_color": palette["label"], "bg_opa": 0, "mode": "dots"})
             out.objects.append({"page": page, "obj": "btnmatrix", "id": mid, "x": full_x + 30,
                                  "y": full_y + 42, "w": full_w - 60, "h": 56, "text_font": 28,
                                  "options": ["Up", "Pause", "Down"], "one_check": 0, "radius": 12})
@@ -483,7 +483,7 @@ def render_page(
                              "h": h, "radius": 14, "bg_color": palette["tile_bg"], "bg_opa": 255, "click": False})
         out.objects.append({"page": page, "obj": "label", "id": base, "x": x + 8, "y": y + 6,
                              "w": max(112, w - 16), "h": 24, "text": label, "text_font": 18,
-                             "text_color": palette["label"], "bg_opa": 0})
+                             "text_color": palette["label"], "bg_opa": 0, "mode": "dots"})
 
         bx = x + max(20, (w - 96) // 2)
         by = y + 36
@@ -503,7 +503,7 @@ def render_page(
                                  "y": full_y, "w": full_w, "h": 88, "radius": 18, "bg_color": palette["bg"]})
             out.objects.append({"page": page, "obj": "label", "id": base + 6, "x": full_x + 18,
                                  "y": full_y + 12, "w": full_w - 36, "h": 24, "text": label,
-                                 "text_font": 20, "text_color": palette["label"], "bg_opa": 0})
+                                 "text_font": 20, "text_color": palette["label"], "bg_opa": 0, "mode": "dots"})
             out.objects.append({"page": page, "obj": "btnmatrix", "id": mid, "x": full_x + 30,
                                  "y": full_y + 42, "w": full_w - 60, "h": 56, "text_font": 28,
                                  "options": ["Up", "Pause", "Down"], "one_check": 0, "radius": 12})
@@ -631,7 +631,7 @@ def _dispatch_entity_content(
         val = display_state(st)
         out.objects.append({"page": page, "obj": "btn", "id": base + 2, "x": bx, "y": by,
                              "w": 88, "h": 64, "text": val, "text_font": 20, "toggle": False,
-                             "bg_opa": 0, "border_width": 0, "radius": 0})
+                             "bg_opa": 0, "border_width": 0, "radius": 0, "mode": "dots"})
         out.sensor_map.setdefault(ent, []).append((page, base + 2))
 
 
@@ -731,7 +731,7 @@ def render_tile_page(
                              "h": h, "radius": 14, "bg_color": palette["tile_bg"], "bg_opa": 255, "click": False})
         out.objects.append({"page": page, "obj": "label", "id": base, "x": x + 8, "y": y + 6,
                              "w": max(112, w - 16), "h": 24, "text": label, "text_font": 18,
-                             "text_color": palette["label"], "bg_opa": 0})
+                             "text_color": palette["label"], "bg_opa": 0, "mode": "dots"})
 
         if tile_type == "gauge":
             gmin = float(tile.get("min", 0))
@@ -752,7 +752,7 @@ def render_tile_page(
             out.objects.append({"page": page, "obj": "label", "id": value_label_id, "x": arc_x,
                                  "y": arc_y + arc_size // 2 - 14, "w": arc_size, "h": 28,
                                  "text": gauge_display_value(st), "text_font": 24, "align": "center",
-                                 "text_color": palette["text"], "bg_opa": 0})
+                                 "text_color": palette["text"], "bg_opa": 0, "mode": "dots"})
             out.gauge_map.setdefault(ent, []).append((page, arc_id, value_label_id, gmin, gmax))
             continue
 
@@ -769,7 +769,7 @@ def render_tile_page(
             temp_id = base + 3
             out.objects.append({"page": page, "obj": "label", "id": temp_id, "x": x, "y": y + 96,
                                  "w": w, "h": 28, "text": weather_temperature_text(st), "text_font": 24,
-                                 "align": "center", "text_color": palette["text"], "bg_opa": 0})
+                                 "align": "center", "text_color": palette["text"], "bg_opa": 0, "mode": "dots"})
             out.weather_map.setdefault(ent, []).append((page, icon_id, temp_id))
             continue
 
