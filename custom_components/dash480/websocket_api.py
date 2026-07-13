@@ -335,6 +335,7 @@ async def ws_entities_for_area(hass: HomeAssistant, connection, msg: dict) -> No
     vol.Required("area_id"): str,
     vol.Required("mode"): vol.In(["append", "new_page"]),
     vol.Optional("target_page_id"): str,
+    vol.Optional("first_page_order"): vol.All(vol.Coerce(int), vol.Range(min=MIN_PAGE_ORDER, max=MAX_PAGE_ORDER)),
 })
 @websocket_api.async_response
 async def ws_generate_from_area(hass: HomeAssistant, connection, msg: dict) -> None:
@@ -402,8 +403,16 @@ async def ws_generate_from_area(hass: HomeAssistant, connection, msg: dict) -> N
         remaining = list(candidates)
         page_num = 0
         per_page = AREA_PAGE_COLUMNS * AREA_PAGE_ROWS
+        requested_first_order = msg.get("first_page_order")
         while remaining:
-            page_order = store.allocate_page_order(panel_entry_id)
+            if page_num == 0 and requested_first_order is not None:
+                # Caller picked an explicit slot for the first page (e.g. the
+                # frontend could offer this) — auto-allocation alone would
+                # take the *lowest* free order, which could be page 1 (the
+                # device's home/fallback screen) with no warning.
+                page_order = requested_first_order
+            else:
+                page_order = store.allocate_page_order(panel_entry_id)
             if page_order is None:
                 break  # no free page_order (1..9) left for this panel
             chunk, remaining = remaining[:per_page], remaining[per_page:]
@@ -416,10 +425,14 @@ async def ws_generate_from_area(hass: HomeAssistant, connection, msg: dict) -> N
             ]
             page_num += 1
             title = area.name if page_num == 1 else f"{area.name} ({page_num})"
-            page = await store.async_create_page(
-                panel_entry_id=panel_entry_id, title=title,
-                columns=AREA_PAGE_COLUMNS, rows=AREA_PAGE_ROWS, tiles=tiles, page_order=page_order,
-            )
+            try:
+                page = await store.async_create_page(
+                    panel_entry_id=panel_entry_id, title=title,
+                    columns=AREA_PAGE_COLUMNS, rows=AREA_PAGE_ROWS, tiles=tiles, page_order=page_order,
+                )
+            except ValueError as err:
+                connection.send_error(msg["id"], "no_free_page_order", str(err))
+                return
             created_pages.append(page["id"])
         skipped_entity_ids = [c[0] for c in remaining]
 
