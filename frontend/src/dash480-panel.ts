@@ -9,9 +9,11 @@ import {
   deletePage,
   publishPanel,
   renderPreview,
+  generateFromArea,
 } from "./api";
 import { cellRect, DEVICE_PX } from "./grid";
 import "./entity-picker";
+import "./area-picker";
 
 type View = "list" | "editor";
 
@@ -30,6 +32,7 @@ export class Dash480Panel extends LitElement {
   @state() private _newPageTitle = "";
   @state() private _typePickerOpenFor: { row: number; col: number } | null = null;
   @state() private _pickerOpenFor: { row: number; col: number; type: "entity" | "gauge" | "weather" } | null = null;
+  @state() private _areaPickerMode: "append" | "new_page" | null = null;
   @state() private _status = "";
 
   connectedCallback(): void {
@@ -156,9 +159,51 @@ export class Dash480Panel extends LitElement {
     await this._refreshPreview();
   }
 
+  private _openAreaPicker(mode: "append" | "new_page") {
+    this._areaPickerMode = mode;
+  }
+
+  private async _onAreaPicked(e: CustomEvent<{ area_id: string }>) {
+    const mode = this._areaPickerMode;
+    this._areaPickerMode = null;
+    if (!mode || !this._panelId) return;
+    const targetPageId = mode === "append" ? this._editingPage?.id : undefined;
+    if (mode === "append" && !targetPageId) return;
+    if (mode === "append") {
+      // The backend appends to the *saved* page — persist local edits first
+      // so they aren't clobbered when we reload the page after generating.
+      await this._save();
+    }
+    const result = await generateFromArea(this.hass, this._panelId, e.detail.area_id, mode, targetPageId);
+    const skipped = result.skipped_entity_ids.length + result.skipped_incompatible_count;
+    this._status = `Placed ${result.placed_count} entities${skipped ? `, ${skipped} skipped` : ""}`;
+    setTimeout(() => (this._status = ""), 4000);
+    if (mode === "append" && this._editingPage) {
+      const { pages } = await listPages(this.hass, this._panelId);
+      const updated = pages.find((p) => p.id === this._editingPage!.id);
+      if (updated) {
+        this._editingPage = updated;
+        await this._refreshPreview();
+      }
+    } else {
+      await this._loadPages();
+    }
+  }
+
   render() {
     if (!this.hass) return nothing;
-    return this._view === "list" ? this._renderList() : this._renderEditor();
+    return html`
+      ${this._view === "list" ? this._renderList() : this._renderEditor()}
+      ${this._areaPickerMode
+        ? html`
+            <dash480-area-picker
+              .hass=${this.hass}
+              @area-picked=${this._onAreaPicked}
+              @picker-closed=${() => (this._areaPickerMode = null)}
+            ></dash480-area-picker>
+          `
+        : nothing}
+    `;
   }
 
   private _renderList() {
@@ -203,7 +248,9 @@ export class Dash480Panel extends LitElement {
                   @input=${(e: InputEvent) => (this._newPageTitle = (e.target as HTMLInputElement).value)}
                 />
                 <button @click=${this._createPage}>+ New Page</button>
+                <button @click=${() => this._openAreaPicker("new_page")}>+ Generate Page from Area</button>
               </div>
+              <span class="status">${this._status}</span>
             `}
       </div>
     `;
@@ -222,6 +269,7 @@ export class Dash480Panel extends LitElement {
         <div class="toolbar">
           <button @click=${this._backToList}>&lt; Back</button>
           <span class="page-title">${page.title}</span>
+          <button @click=${() => this._openAreaPicker("append")}>+ Add Area Entities</button>
           <button @click=${this._save}>Save</button>
           <button @click=${this._publish}>Publish</button>
           <span class="status">${this._status}</span>

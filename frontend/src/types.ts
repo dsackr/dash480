@@ -57,3 +57,17 @@ export interface CompatibleEntity {
   friendly_name: string;
   domain: string;
 }
+
+export interface Area {
+  area_id: string;
+  name: string;
+  entity_count: number;
+  device_count: number;
+}
+
+export interface GenerateFromAreaResult {
+  created_pages: string[];
+  placed_count: number;
+  skipped_entity_ids: string[];
+  skipped_incompatible_count: number;
+}

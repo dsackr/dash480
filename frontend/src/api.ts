@@ -1,5 +1,7 @@
 import type {
+  Area,
   CompatibleEntity,
+  GenerateFromAreaResult,
   HomeAssistant,
   Panel,
   PreviewTile,
@@ -62,4 +64,22 @@ export const compatibleEntities = (hass: HomeAssistant, tileType: string) =>
   call<{ entities: CompatibleEntity[] }>(hass, {
     type: "dash480/registry/compatible_entities",
     tile_type: tileType,
+  });
+
+export const listAreas = (hass: HomeAssistant) =>
+  call<{ areas: Area[] }>(hass, { type: "dash480/registry/areas" });
+
+export const generateFromArea = (
+  hass: HomeAssistant,
+  panelEntryId: string,
+  areaId: string,
+  mode: "append" | "new_page",
+  targetPageId?: string,
+) =>
+  call<GenerateFromAreaResult>(hass, {
+    type: "dash480/pages/generate_from_area",
+    panel_entry_id: panelEntryId,
+    area_id: areaId,
+    mode,
+    ...(targetPageId ? { target_page_id: targetPageId } : {}),
   });
