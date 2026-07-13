@@ -198,8 +198,17 @@ async def ws_compatible_entities(hass: HomeAssistant, connection, msg: dict) -> 
             for state in hass.states.async_all()
             if state.domain in GAUGE_TILE_DOMAINS and _is_numeric_state(state)
         ]
+    elif tile_type == "weather":
+        entities = [
+            {
+                "entity_id": state.entity_id,
+                "friendly_name": state.attributes.get("friendly_name", state.entity_id),
+                "domain": state.domain,
+            }
+            for state in hass.states.async_all()
+            if state.domain == "weather"
+        ]
     else:
-        # weather tile-type compatibility list arrives in a later phase.
         entities = []
     entities.sort(key=lambda e: e["friendly_name"].lower())
     connection.send_result(msg["id"], {"entities": entities})

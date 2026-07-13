@@ -116,6 +116,45 @@ def gauge_arc_value(state: Any, gmin: float, gmax: float) -> float:
     return gmin
 
 
+# MDI codepoints (from openHASP's font reference) for HA's standard weather
+# entity condition strings. Verified live against the physical panel for
+# sunny/cloudy/rainy before use (same discovery pattern as DEFAULT_CALENDAR_ICON);
+# the rest come from the same official reference table and were not each
+# individually re-verified — correct here if any renders wrong.
+WEATHER_CONDITION_ICONS = {
+    "sunny": "E599",
+    "clear-night": "E594",
+    "cloudy": "E590",
+    "partlycloudy": "E595",
+    "pouring": "E596",
+    "rainy": "E597",
+    "snowy": "E598",
+    "snowy-rainy": "E598",
+    "fog": "E591",
+    "hail": "E592",
+    "lightning": "E593",
+    "lightning-rainy": "E67E",
+    "windy": "E59E",
+    "windy-variant": "E59E",
+}
+DEFAULT_WEATHER_ICON = "E590"  # weather-cloudy — fallback for "exceptional"/unknown conditions
+
+
+def weather_icon_codepoint(condition: Any) -> str:
+    return WEATHER_CONDITION_ICONS.get(condition, DEFAULT_WEATHER_ICON)
+
+
+def weather_temperature_text(state: Any) -> str:
+    """'<temperature><unit>' for a weather tile, or '--' if unset/unavailable."""
+    if not state or state.state in UNAVAILABLE_STATES:
+        return "--"
+    temp = state.attributes.get("temperature")
+    if temp is None:
+        return "--"
+    unit = state.attributes.get("temperature_unit") or ""
+    return f"{temp}{unit}"
+
+
 # Placeholder codepoint (unverified against the actual font flashed to the
 # device) — correctable per-slot via the existing icon picker (select.py's
 # ICON_CHOICES) without a code release, same as every other icon.
@@ -371,6 +410,10 @@ class PageRender:
     # tile's live-update needs both the arc's .val and the label's .text
     # kept in sync, unlike a plain sensor tile's single .text update.
     gauge_map: dict[str, list[tuple[int, int, int, float, float]]] = field(default_factory=dict)
+    # entity -> list of (page, icon_label_id, temp_label_id) — a weather
+    # tile's live-update needs both the condition icon and the temperature
+    # text kept in sync, same shape as gauge_map.
+    weather_map: dict[str, list[tuple[int, int, int]]] = field(default_factory=dict)
 
 
 def render_page(
@@ -667,8 +710,7 @@ def render_tile_page(
 
     for tile_index, tile in enumerate(tiles[:MAX_TILES_PER_PAGE]):
         tile_type = tile.get("type")
-        if tile_type not in ("entity", "gauge"):
-            # weather tile type arrives in a later phase.
+        if tile_type not in ("entity", "gauge", "weather"):
             continue
         ent = tile.get("entity_id")
         if not ent:
@@ -712,6 +754,23 @@ def render_tile_page(
                                  "text": gauge_display_value(st), "text_font": 24, "align": "center",
                                  "text_color": palette["text"], "bg_opa": 0})
             out.gauge_map.setdefault(ent, []).append((page, arc_id, value_label_id, gmin, gmax))
+            continue
+
+        if tile_type == "weather":
+            icon_code = weather_icon_codepoint(st.state if st else None)
+            try:
+                icon_value = int(icon_code, 16)
+            except (TypeError, ValueError):
+                icon_value = int(DEFAULT_WEATHER_ICON, 16)
+            icon_id = base + 2
+            out.objects.append({"page": page, "obj": "label", "id": icon_id, "x": x, "y": y + 34,
+                                 "w": w, "h": 56, "text": chr(icon_value), "text_font": 48,
+                                 "align": "center", "text_color": palette["text"], "bg_opa": 0})
+            temp_id = base + 3
+            out.objects.append({"page": page, "obj": "label", "id": temp_id, "x": x, "y": y + 96,
+                                 "w": w, "h": 28, "text": weather_temperature_text(st), "text_font": 24,
+                                 "align": "center", "text_color": palette["text"], "bg_opa": 0})
+            out.weather_map.setdefault(ent, []).append((page, icon_id, temp_id))
             continue
 
         domain = ent.split(".")[0]

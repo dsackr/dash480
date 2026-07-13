@@ -29,7 +29,7 @@ export class Dash480Panel extends LitElement {
   @state() private _previewTiles: PreviewTile[] = [];
   @state() private _newPageTitle = "";
   @state() private _typePickerOpenFor: { row: number; col: number } | null = null;
-  @state() private _pickerOpenFor: { row: number; col: number; type: "entity" | "gauge" } | null = null;
+  @state() private _pickerOpenFor: { row: number; col: number; type: "entity" | "gauge" | "weather" } | null = null;
   @state() private _status = "";
 
   connectedCallback(): void {
@@ -109,7 +109,7 @@ export class Dash480Panel extends LitElement {
     this._typePickerOpenFor = { row, col };
   }
 
-  private _chooseTileType(type: "entity" | "gauge") {
+  private _chooseTileType(type: "entity" | "gauge" | "weather") {
     if (!this._typePickerOpenFor) return;
     this._pickerOpenFor = { ...this._typePickerOpenFor, type };
     this._typePickerOpenFor = null;
@@ -131,6 +131,8 @@ export class Dash480Panel extends LitElement {
       const min = Number(window.prompt("Minimum value", "0") ?? "0");
       const max = Number(window.prompt("Maximum value", "100") ?? "100");
       tile = { ...baseTile, type: "gauge", min: Number.isFinite(min) ? min : 0, max: Number.isFinite(max) ? max : 100 };
+    } else if (type === "weather") {
+      tile = { ...baseTile, type: "weather" };
     } else {
       tile = { ...baseTile, type: "entity" };
     }
@@ -237,6 +239,7 @@ export class Dash480Panel extends LitElement {
           ${this._previewTiles.map((t) => {
             const tile = page.tiles.find((pt) => pt.id === t.id);
             const isGauge = tile?.type === "gauge";
+            const isWeather = tile?.type === "weather";
             let pct = 0;
             if (isGauge && tile) {
               const min = tile.min ?? 0;
@@ -246,6 +249,8 @@ export class Dash480Panel extends LitElement {
                 pct = Math.max(0, Math.min(100, ((raw - min) / (max - min)) * 100));
               }
             }
+            const temp = t.attributes?.["temperature"];
+            const tempUnit = t.attributes?.["temperature_unit"] ?? "";
             return html`
               <div class="tile" style="left:${t.x}px;top:${t.y}px;width:${t.w}px;height:${t.h}px;">
                 <div class="tile-label">${t.friendly_name}</div>
@@ -255,7 +260,12 @@ export class Dash480Panel extends LitElement {
                         <div class="gauge-ring-inner">${t.state ?? "--"}</div>
                       </div>
                     `
-                  : html`<div class="tile-state">${t.state ?? "--"}</div>`}
+                  : isWeather
+                    ? html`
+                        <div class="weather-condition">${t.state ?? "--"}</div>
+                        <div class="tile-state">${temp !== undefined ? `${temp}${tempUnit}` : "--"}</div>
+                      `
+                    : html`<div class="tile-state">${t.state ?? "--"}</div>`}
                 <button class="tile-remove" @click=${() => tile && this._removeTile(tile.id)}>×</button>
               </div>
             `;
@@ -270,6 +280,7 @@ export class Dash480Panel extends LitElement {
                 <div class="type-chooser" @click=${(e: Event) => e.stopPropagation()}>
                   <button @click=${() => this._chooseTileType("entity")}>Entity Tile</button>
                   <button @click=${() => this._chooseTileType("gauge")}>Gauge Tile</button>
+                  <button @click=${() => this._chooseTileType("weather")}>Weather Tile</button>
                 </div>
               </div>
             `
@@ -366,6 +377,11 @@ export class Dash480Panel extends LitElement {
     .tile-state {
       font-size: 14px;
       margin-top: 4px;
+    }
+    .weather-condition {
+      font-size: 20px;
+      margin-top: 12px;
+      text-align: center;
     }
     .tile-remove {
       position: absolute;

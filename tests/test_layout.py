@@ -291,8 +291,8 @@ class RenderTilePageTests(unittest.TestCase):
         self.assertEqual(len(render.option_specs), 1)
         self.assertEqual(render.option_specs[0]["type"], "fan")
 
-    def test_unimplemented_tile_type_skipped_without_error(self):
-        page = self._page([{"id": "t1", "type": "weather", "entity_id": "weather.home", "row": 0, "col": 0}])
+    def test_unknown_tile_type_skipped_without_error(self):
+        page = self._page([{"id": "t1", "type": "bogus", "entity_id": "sensor.temp", "row": 0, "col": 0}])
         alloc = layout.option_page_allocator(50)
         render = layout.render_tile_page(2, page, self.lookup, alloc)
         self.assertEqual(render.objects, [])
@@ -339,6 +339,35 @@ class RenderTilePageTests(unittest.TestCase):
         render = layout.render_tile_page(2, page, self.lookup, alloc)
         value_label = next(o for o in render.objects if o.get("obj") == "label" and o.get("align") == "center")
         self.assertEqual(value_label["text"], "72°F")
+
+    def test_weather_tile_json_roundtrip_and_icon(self):
+        self.states["weather.home"] = fake_state("sunny", friendly_name="Home", temperature=72, temperature_unit="°F")
+        page = self._page([{"id": "t1", "type": "weather", "entity_id": "weather.home", "row": 0, "col": 0}])
+        alloc = layout.option_page_allocator(50)
+        render = layout.render_tile_page(2, page, self.lookup, alloc)
+        self.assertIn("weather.home", render.weather_map)
+        for obj in render.objects:
+            json.dumps(obj)
+        icon_obj = next(o for o in render.objects if o.get("text_font") == 48)
+        self.assertEqual(icon_obj["text"], chr(0xE599))
+        temp_obj = next(o for o in render.objects if o.get("text_font") == 24)
+        self.assertEqual(temp_obj["text"], "72°F")
+
+    def test_weather_tile_unknown_condition_falls_back_to_default_icon(self):
+        self.states["weather.home"] = fake_state("exceptional", temperature=50, temperature_unit="°F")
+        page = self._page([{"id": "t1", "type": "weather", "entity_id": "weather.home", "row": 0, "col": 0}])
+        alloc = layout.option_page_allocator(50)
+        render = layout.render_tile_page(2, page, self.lookup, alloc)
+        icon_obj = next(o for o in render.objects if o.get("text_font") == 48)
+        self.assertEqual(icon_obj["text"], chr(int(layout.DEFAULT_WEATHER_ICON, 16)))
+
+    def test_weather_tile_unavailable_renders_dashes(self):
+        self.states["weather.home"] = fake_state("unavailable")
+        page = self._page([{"id": "t1", "type": "weather", "entity_id": "weather.home", "row": 0, "col": 0}])
+        alloc = layout.option_page_allocator(50)
+        render = layout.render_tile_page(2, page, self.lookup, alloc)
+        temp_obj = next(o for o in render.objects if o.get("text_font") == 24)
+        self.assertEqual(temp_obj["text"], "--")
 
     def test_tile_ids_do_not_collide_across_tiles(self):
         tiles = [

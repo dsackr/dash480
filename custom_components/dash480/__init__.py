@@ -15,6 +15,7 @@ import voluptuous as vol
 
 from .const import DOMAIN
 from .layout import (
+    DEFAULT_WEATHER_ICON,
     build_option_page,
     build_page_ring,
     display_state,
@@ -30,6 +31,8 @@ from .layout import (
     render_page,
     render_tile_page,
     ring_neighbors,
+    weather_icon_codepoint,
+    weather_temperature_text,
 )
 from .pages_store import async_get_store
 
@@ -358,6 +361,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         option_open_map: dict,
         fan_status_map: dict,
         gauge_map: dict,
+        weather_map: dict,
         alloc_option_page,
         palette: dict,
     ) -> None:
@@ -420,6 +424,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             fan_status_map.setdefault(ent, []).extend(targets)
         for ent, targets in render.gauge_map.items():
             gauge_map.setdefault(ent, []).extend(targets)
+        for ent, targets in render.weather_map.items():
+            weather_map.setdefault(ent, []).extend(targets)
         for option_spec in render.option_specs:
             option_specs.append(option_spec)
             option_open_map[option_spec["trigger_topic"]] = option_spec
@@ -490,6 +496,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         color_btn_map: dict[str, dict] = {}
         fan_status_map: dict[str, list[tuple[int, tuple[str, int]]]] = {}
         gauge_map: dict[str, list[tuple[int, int, int, float, float]]] = {}
+        weather_map: dict[str, list[tuple[int, int, int]]] = {}
         option_specs: list[dict] = []
         option_open_map: dict[str, dict] = {}
         alloc_option_page = option_page_allocator(50)
@@ -509,6 +516,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 option_open_map,
                 fan_status_map,
                 gauge_map,
+                weather_map,
                 alloc_option_page,
                 palette,
             )
@@ -528,6 +536,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN][entry.entry_id]["color_btn_map"] = color_btn_map
         hass.data[DOMAIN][entry.entry_id]["fan_status_map"] = fan_status_map
         hass.data[DOMAIN][entry.entry_id]["gauge_map"] = gauge_map
+        hass.data[DOMAIN][entry.entry_id]["weather_map"] = weather_map
         # rewire toggle/matrix listeners
         for key in list(hass.data[DOMAIN][entry.entry_id].keys()):
             if key.startswith("unsub_ent_"):
@@ -638,6 +647,34 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             cb = _make_gauge_cb(ent)
             unsub = async_track_state_change_event(hass, [ent], cb)
             hass.data[DOMAIN][entry.entry_id][f"unsub_gauge_{ent}"] = unsub
+
+        # rewire weather listeners — same dual-target shape as gauge (icon +
+        # temperature both need to update together on a state change).
+        for key in list(hass.data[DOMAIN][entry.entry_id].keys()):
+            if key.startswith("unsub_weather_"):
+                u = hass.data[DOMAIN][entry.entry_id].pop(key)
+                try:
+                    u()
+                except Exception:
+                    pass
+        for ent in weather_map:
+            def _make_weather_cb(eid: str):
+                async def _cb(event):
+                    state = hass.states.get(eid)
+                    icon_code = weather_icon_codepoint(state.state if state else None)
+                    try:
+                        icon_char = chr(int(icon_code, 16))
+                    except (TypeError, ValueError):
+                        icon_char = chr(int(DEFAULT_WEATHER_ICON, 16))
+                    for (pnum, icon_id, temp_id) in weather_map.get(eid, []):
+                        await mqtt.async_publish(hass, f"hasp/{node_name}/command/p{pnum}b{icon_id}.text", icon_char)
+                        await mqtt.async_publish(
+                            hass, f"hasp/{node_name}/command/p{pnum}b{temp_id}.text", weather_temperature_text(state)
+                        )
+                return _cb
+            cb = _make_weather_cb(ent)
+            unsub = async_track_state_change_event(hass, [ent], cb)
+            hass.data[DOMAIN][entry.entry_id][f"unsub_weather_{ent}"] = unsub
 
     # Define the callback for when the device comes online
     @callback
