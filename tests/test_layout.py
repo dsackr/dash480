@@ -169,6 +169,75 @@ class RenderPageTests(unittest.TestCase):
         self.assertEqual(matrix_objs[0]["options"], ["Up", "Pause", "Down"])
 
 
+    def test_battery_sensor_tile_renders_battery_icon(self):
+        self.states["sensor.living_room_frame_1_battery"] = fake_state("76.0", device_class="battery")
+        slots = [("s1", "sensor.living_room_frame_1_battery")]
+        alloc = layout.option_page_allocator(50)
+        render = layout.render_page(2, "grid_3x2", slots, {}, self.lookup, alloc, hass=None)
+        
+        # Verify that battery_map has mapped the entity
+        self.assertIn("sensor.living_room_frame_1_battery", render.battery_map)
+        
+        # Since base for first slot starts at 10 (base = 10)
+        obj_types = [o["obj"] for o in render.objects if o.get("id") in (12, 13, 14, 15)]
+        self.assertCountEqual(obj_types, ["obj", "obj", "obj", "label"])
+
+    def test_camera_tile_renders_fraimic_image(self):
+        import sys
+        from unittest.mock import MagicMock
+        
+        mock_registry = MagicMock()
+        mock_reg_entry = MagicMock()
+        mock_reg_entry.platform = "fraimic"
+        mock_reg_entry.domain = "camera"
+        mock_reg_entry.config_entry_id = "test_entry_id"
+        mock_registry.async_get.return_value = mock_reg_entry
+        
+        mock_er = MagicMock()
+        mock_er.async_get.return_value = mock_registry
+        
+        mock_network = MagicMock()
+        mock_network.get_url.return_value = "http://localhost:8123"
+        
+        mock_helpers = MagicMock()
+        mock_helpers.entity_registry = mock_er
+        mock_helpers.network = mock_network
+        
+        # Save original homeassistant modules if they exist
+        orig_modules = {
+            "homeassistant": sys.modules.get("homeassistant"),
+            "homeassistant.helpers": sys.modules.get("homeassistant.helpers"),
+            "homeassistant.helpers.entity_registry": sys.modules.get("homeassistant.helpers.entity_registry"),
+            "homeassistant.helpers.network": sys.modules.get("homeassistant.helpers.network"),
+        }
+        
+        try:
+            sys.modules["homeassistant"] = MagicMock()
+            sys.modules["homeassistant.helpers"] = mock_helpers
+            sys.modules["homeassistant.helpers.entity_registry"] = mock_er
+            sys.modules["homeassistant.helpers.network"] = mock_network
+            
+            slots = [("s1", "camera.living_room_frame_1_display")]
+            alloc = layout.option_page_allocator(50)
+            render = layout.render_page(2, "grid_3x2", slots, {}, self.lookup, alloc, hass=MagicMock())
+            
+            # Verify that fraimic_map has mapped the entity
+            self.assertIn("camera.living_room_frame_1_display", render.fraimic_map)
+            
+            # Verify that the image object was rendered
+            img_objs = [o for o in render.objects if o.get("obj") == "img"]
+            self.assertEqual(len(img_objs), 1)
+            self.assertEqual(img_objs[0]["id"], 12)  # base + 2 (base = 10)
+            self.assertIn("fraimic_thumbnail/test_entry_id", img_objs[0]["src"])
+        finally:
+            # Restore original modules
+            for k, v in orig_modules.items():
+                if v is None:
+                    sys.modules.pop(k, None)
+                else:
+                    sys.modules[k] = v
+
+
 class OptionPageTests(unittest.TestCase):
     def test_fan_option_page_ids(self):
         spec = {"page_id": 50, "origin_page": 2, "friendly_name": "Bedroom Fan", "type": "fan"}
