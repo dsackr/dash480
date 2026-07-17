@@ -31,7 +31,7 @@ from .pages_store import (
 # Domains selectable for an "entity" tile in the visual builder — matches
 # select.py's ALLOWED_DOMAINS for the legacy per-slot picker (weather/gauge
 # get their own tile types and compatibility lists in a later phase).
-ENTITY_TILE_DOMAINS = {"switch", "light", "fan", "sensor", "cover", "calendar"}
+ENTITY_TILE_DOMAINS = {"switch", "light", "fan", "sensor", "cover", "calendar", "camera"}
 
 # A gauge is for any numeric entity with a meaningful range — sensor domain
 # is filtered to states that actually parse as a number (excludes text/enum
