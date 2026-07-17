@@ -12,7 +12,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .const import DOMAIN, ICON_CHOICES
 
 
-ALLOWED_DOMAINS = {"switch", "light", "fan", "sensor", "cover", "calendar"}
+ALLOWED_DOMAINS = {"switch", "light", "fan", "sensor", "cover", "calendar", "camera"}
 
 LAYOUT_OPTIONS = {
     "grid_3x2": "Grid 3×2 (2 rows)",

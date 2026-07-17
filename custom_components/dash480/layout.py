@@ -414,6 +414,9 @@ class PageRender:
     # tile's live-update needs both the condition icon and the temperature
     # text kept in sync, same shape as gauge_map.
     weather_map: dict[str, list[tuple[int, int, int]]] = field(default_factory=dict)
+    # entity -> list of (page, img_id, config_entry_id) — a fraimic tile
+    # uses an img object to render the frame's live thumbnail URL.
+    fraimic_map: dict[str, list[tuple[int, int, str]]] = field(default_factory=dict)
 
 
 def render_page(
@@ -424,6 +427,7 @@ def render_page(
     state_lookup: StateLookup,
     alloc_option_page: Callable[[], int],
     palette: dict = DARK_PALETTE,
+    hass: Any = None,
 ) -> PageRender:
     """Build every JSONL tile object and touch-routing map fragment for one page.
 
@@ -513,7 +517,7 @@ def render_page(
             out.ctrl_map[f"p{page}b{base + 2}"] = ent
         else:
             _dispatch_entity_content(out, page, base, x, y, w, h, bx, by, ent, st, label,
-                                      icon_overrides.get(key), domain, alloc_option_page, palette)
+                                      icon_overrides.get(key), domain, alloc_option_page, palette, hass)
 
     return out
 
@@ -535,6 +539,7 @@ def _dispatch_entity_content(
     domain: str,
     alloc_option_page: Callable[[], int],
     palette: dict,
+    hass: Any = None,
 ) -> None:
     """Domain-specific tile content (toggle/popup/sensor/calendar/cover),
     appended in place to `out`. The tile's own background+label must already
@@ -545,6 +550,40 @@ def _dispatch_entity_content(
     here) and render_tile_page() (whose free-grid tiles use the cover branch
     here, drawn inside the tile's own rect instead of a hardcoded full width).
     """
+    if hass is not None:
+        try:
+            from homeassistant.helpers import entity_registry as er
+            registry = er.async_get(hass)
+            reg_entry = registry.async_get(ent)
+            if reg_entry and reg_entry.platform == "fraimic" and reg_entry.domain == "camera":
+                entry_id = reg_entry.config_entry_id
+                from homeassistant.helpers.network import get_url
+                try:
+                    ha_url = get_url(hass)
+                except Exception:
+                    ha_url = "http://localhost:8123"
+                img_src = f"{ha_url}/api/dash480/fraimic_thumbnail/{entry_id}"
+                img_w = w - 16
+                img_h = h - 38
+                img_x = x + 8
+                img_y = y + 30
+                if img_w > 0 and img_h > 0:
+                    out.objects.append({
+                        "page": page,
+                        "obj": "img",
+                        "id": base + 2,
+                        "x": img_x,
+                        "y": img_y,
+                        "w": img_w,
+                        "h": img_h,
+                        "src": img_src,
+                        "auto_size": 0,
+                    })
+                    out.fraimic_map.setdefault(ent, []).append((page, base + 2, entry_id))
+                    return
+        except Exception:
+            pass
+
     if domain in ("switch", "light", "fan"):
         icon_default = "E210" if domain == "fan" else "E425"
         icon_resolved = icon_code or icon_default
@@ -695,6 +734,7 @@ def render_tile_page(
     state_lookup: StateLookup,
     alloc_option_page: Callable[[], int],
     palette: dict = DARK_PALETTE,
+    hass: Any = None,
 ) -> PageRender:
     """Render a visual-builder page (arbitrary grid, explicit tile list) —
     the new-model counterpart to render_page()'s template-slot rendering.
@@ -777,7 +817,7 @@ def render_tile_page(
         bx = x + max(20, (w - 96) // 2)
         by = y + 36
         _dispatch_entity_content(out, page, base, x, y, w, h, bx, by, ent, st, label,
-                                  tile.get("icon"), domain, alloc_option_page, palette)
+                                  tile.get("icon"), domain, alloc_option_page, palette, hass)
 
     return out
 

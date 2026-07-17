@@ -194,6 +194,7 @@ export class Dash480PreviewCanvas extends LitElement {
     if (!tile) return nothing;
     const isGauge = tile.type === "gauge";
     const isWeather = tile.type === "weather";
+    const isCamera = tile.entity_id?.startsWith("camera.");
     let pct = 0;
     if (isGauge) {
       const min = tile.min ?? 0;
@@ -228,7 +229,15 @@ export class Dash480PreviewCanvas extends LitElement {
                       <div class="weather-condition">${t.state ?? "--"}</div>
                       <div class="tile-state">${temp !== undefined ? `${temp}${tempUnit}` : "--"}</div>
                     `
-                  : html`<div class="tile-state">${t.state ?? "--"}</div>`}
+                  : isCamera && t.attributes?.["entity_picture"]
+                    ? html`
+                        <img
+                          src="${t.attributes["entity_picture"]}"
+                          style="width: 100%; height: calc(100% - 30px); object-fit: contain; margin-top: 4px;"
+                          draggable="false"
+                        />
+                      `
+                    : html`<div class="tile-state">${t.state ?? "--"}</div>`}
             `}
         ${selected
           ? html`
