@@ -195,6 +195,7 @@ export class Dash480PreviewCanvas extends LitElement {
     const isGauge = tile.type === "gauge";
     const isWeather = tile.type === "weather";
     const isCamera = tile.entity_id?.startsWith("camera.");
+    const isBattery = tile.entity_id?.toLowerCase().includes("battery");
     let pct = 0;
     if (isGauge) {
       const min = tile.min ?? 0;
@@ -237,7 +238,23 @@ export class Dash480PreviewCanvas extends LitElement {
                           draggable="false"
                         />
                       `
-                    : html`<div class="tile-state">${t.state ?? "--"}</div>`}
+                    : isBattery
+                      ? (() => {
+                          const val = parseInt(t.state) || 50;
+                          const pctVal = Math.max(0, Math.min(100, val));
+                          const barW = Math.round((pctVal / 100) * 42);
+                          const color = pctVal < 15 ? "#EF4444" : (pctVal < 50 ? "#F59E0B" : "#10B981");
+                          return html`
+                            <div class="battery-preview-container" style="display: flex; align-items: center; justify-content: center; gap: 12px; height: calc(100% - 30px); margin-top: 4px;">
+                              <div class="battery-outline" style="position: relative; width: 48px; height: 24px; border: 2px solid #e2e8f0; border-radius: 4px; box-sizing: border-box; display: flex; align-items: center; padding: 1px;">
+                                <div class="battery-bar" style="width: ${barW}px; height: 100%; background-color: ${color}; border-radius: 2px; transition: width 0.2s ease;"></div>
+                                <div class="battery-cap" style="position: absolute; right: -6px; top: 5px; width: 4px; height: 10px; background-color: #e2e8f0; border-radius: 1px;"></div>
+                              </div>
+                              <div class="battery-text" style="font-size: 20px; font-weight: bold; color: #e2e8f0;">${pctVal}%</div>
+                            </div>
+                          `;
+                        })()
+                      : html`<div class="tile-state">${t.state ?? "--"}</div>`}
             `}
         ${selected
           ? html`

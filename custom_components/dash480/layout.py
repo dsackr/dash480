@@ -417,6 +417,9 @@ class PageRender:
     # entity -> list of (page, img_id, config_entry_id) — a fraimic tile
     # uses an img object to render the frame's live thumbnail URL.
     fraimic_map: dict[str, list[tuple[int, int, str]]] = field(default_factory=dict)
+    # entity -> list of (page, text_id, bar_id) — a battery tile's live-update
+    # needs to update the percentage text, the inner bar width, and the color.
+    battery_map: dict[str, list[tuple[int, int, int]]] = field(default_factory=dict)
 
 
 def render_page(
@@ -583,6 +586,78 @@ def _dispatch_entity_content(
                     return
         except Exception:
             pass
+
+    if domain == "sensor" and "battery" in ent.lower():
+        try:
+            pct = int(float(st.state)) if st and st.state not in (None, "unknown", "unavailable") else 50
+        except (ValueError, TypeError):
+            pct = 50
+        pct = max(0, min(100, pct))
+        
+        # Center the battery outline and text label horizontally inside the tile
+        cx = x + max(8, (w - 116) // 2)
+        cy = y + 36 + max(0, (h - 36 - 24) // 2)
+        
+        bar_w = int((pct / 100) * 42)
+        bar_color = "#EF4444" if pct < 15 else ("#F59E0B" if pct < 50 else "#10B981")
+        
+        # Outer outline
+        out.objects.append({
+            "page": page,
+            "obj": "obj",
+            "id": base + 2,
+            "x": cx,
+            "y": cy,
+            "w": 48,
+            "h": 24,
+            "radius": 4,
+            "border_width": 2,
+            "border_color": palette["text"],
+            "bg_opa": 0,
+        })
+        # Terminal cap
+        out.objects.append({
+            "page": page,
+            "obj": "obj",
+            "id": base + 3,
+            "x": cx + 48,
+            "y": cy + 7,
+            "w": 4,
+            "h": 10,
+            "radius": 1,
+            "bg_color": palette["text"],
+            "border_width": 0,
+        })
+        # Inner bar
+        out.objects.append({
+            "page": page,
+            "obj": "obj",
+            "id": base + 4,
+            "x": cx + 3,
+            "y": cy + 3,
+            "w": bar_w,
+            "h": 18,
+            "radius": 2,
+            "bg_color": bar_color,
+            "border_width": 0,
+        })
+        # Percentage text label
+        out.objects.append({
+            "page": page,
+            "obj": "label",
+            "id": base + 5,
+            "x": cx + 60,
+            "y": cy - 2,
+            "w": 52,
+            "h": 28,
+            "text": f"{pct}%",
+            "text_font": 20,
+            "text_color": palette["text"],
+            "bg_opa": 0,
+            "align": "left",
+        })
+        out.battery_map.setdefault(ent, []).append((page, base + 5, base + 4))
+        return
 
     if domain in ("switch", "light", "fan"):
         icon_default = "E210" if domain == "fan" else "E425"

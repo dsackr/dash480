@@ -432,6 +432,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         alloc_option_page,
         palette: dict,
         fraimic_map: dict,
+        battery_map: dict,
     ) -> None:
         prev_p, next_p = ring_neighbors(ring, p)
         # Clear page and draw base
@@ -496,6 +497,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             weather_map.setdefault(ent, []).extend(targets)
         for ent, targets in getattr(render, "fraimic_map", {}).items():
             fraimic_map.setdefault(ent, []).extend(targets)
+        for ent, targets in getattr(render, "battery_map", {}).items():
+            battery_map.setdefault(ent, []).extend(targets)
         for option_spec in render.option_specs:
             option_specs.append(option_spec)
             option_open_map[option_spec["trigger_topic"]] = option_spec
@@ -568,6 +571,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         gauge_map: dict[str, list[tuple[int, int, int, float, float]]] = {}
         weather_map: dict[str, list[tuple[int, int, int]]] = {}
         fraimic_map: dict[str, list[tuple[int, int, str]]] = {}
+        battery_map: dict[str, list[tuple[int, int, int]]] = {}
         option_specs: list[dict] = []
         option_open_map: dict[str, dict] = {}
         alloc_option_page = option_page_allocator(50)
@@ -591,6 +595,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 alloc_option_page,
                 palette,
                 fraimic_map,
+                battery_map,
             )
         option_close_map: dict[str, dict] = {}
         option_page_titles: dict[int, str] = {}
@@ -606,6 +611,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN][entry.entry_id]["ent_toggle_map"] = ent_toggle_map
         hass.data[DOMAIN][entry.entry_id]["ent_matrix_map"] = ent_matrix_map
         hass.data[DOMAIN][entry.entry_id]["fraimic_map"] = fraimic_map
+        hass.data[DOMAIN][entry.entry_id]["battery_map"] = battery_map
         hass.data[DOMAIN][entry.entry_id]["color_btn_map"] = color_btn_map
         hass.data[DOMAIN][entry.entry_id]["fan_status_map"] = fan_status_map
         hass.data[DOMAIN][entry.entry_id]["gauge_map"] = gauge_map
@@ -773,6 +779,37 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             cb = _make_fraimic_cb(ent)
             unsub = async_track_state_change_event(hass, [ent], cb)
             hass.data[DOMAIN][entry.entry_id][f"unsub_fraimic_{ent}"] = unsub
+
+        # rewire battery listeners
+        for key in list(hass.data[DOMAIN][entry.entry_id].keys()):
+            if key.startswith("unsub_battery_"):
+                u = hass.data[DOMAIN][entry.entry_id].pop(key)
+                try:
+                    u()
+                except Exception:
+                    pass
+        for ent in battery_map:
+            def _make_battery_cb(eid: str):
+                async def _cb(event):
+                    new_state = event.data.get("new_state")
+                    if not new_state:
+                        return
+                    try:
+                        pct = int(float(new_state.state))
+                    except (ValueError, TypeError):
+                        return
+                    pct = max(0, min(100, pct))
+                    bar_w = int((pct / 100) * 42)
+                    bar_color = "#EF4444" if pct < 15 else ("#F59E0B" if pct < 50 else "#10B981")
+                    
+                    for (pnum, text_id, bar_id) in battery_map.get(eid, []):
+                        await mqtt.async_publish(hass, f"hasp/{node_name}/command/p{pnum}b{text_id}.text", f"{pct}%")
+                        await mqtt.async_publish(hass, f"hasp/{node_name}/command/p{pnum}b{bar_id}.w", str(bar_w))
+                        await mqtt.async_publish(hass, f"hasp/{node_name}/command/p{pnum}b{bar_id}.bg_color", bar_color)
+                return _cb
+            cb = _make_battery_cb(ent)
+            unsub = async_track_state_change_event(hass, [ent], cb)
+            hass.data[DOMAIN][entry.entry_id][f"unsub_battery_{ent}"] = unsub
 
     # Define the callback for when the device comes online
     @callback
