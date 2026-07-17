@@ -414,9 +414,9 @@ class PageRender:
     # tile's live-update needs both the condition icon and the temperature
     # text kept in sync, same shape as gauge_map.
     weather_map: dict[str, list[tuple[int, int, int]]] = field(default_factory=dict)
-    # entity -> list of (page, img_id, config_entry_id) — a fraimic tile
-    # uses an img object to render the frame's live thumbnail URL.
-    fraimic_map: dict[str, list[tuple[int, int, str]]] = field(default_factory=dict)
+    # entity -> list of (page, img_id, entity_id) — a camera tile
+    # uses an img object to render the camera's live proxy URL.
+    camera_map: dict[str, list[tuple[int, int, str]]] = field(default_factory=dict)
     # entity -> list of (page, text_id, bar_id) — a battery tile's live-update
     # needs to update the percentage text, the inner bar width, and the color.
     battery_map: dict[str, list[tuple[int, int, int]]] = field(default_factory=dict)
@@ -553,39 +553,31 @@ def _dispatch_entity_content(
     here) and render_tile_page() (whose free-grid tiles use the cover branch
     here, drawn inside the tile's own rect instead of a hardcoded full width).
     """
-    if hass is not None:
+    if domain == "camera":
+        from homeassistant.helpers.network import get_url
         try:
-            from homeassistant.helpers import entity_registry as er
-            registry = er.async_get(hass)
-            reg_entry = registry.async_get(ent)
-            if reg_entry and reg_entry.platform == "fraimic" and reg_entry.domain == "camera":
-                entry_id = reg_entry.config_entry_id
-                from homeassistant.helpers.network import get_url
-                try:
-                    ha_url = get_url(hass)
-                except Exception:
-                    ha_url = "http://localhost:8123"
-                img_src = f"{ha_url}/api/dash480/fraimic_thumbnail/{entry_id}"
-                img_w = w - 16
-                img_h = h - 38
-                img_x = x + 8
-                img_y = y + 30
-                if img_w > 0 and img_h > 0:
-                    out.objects.append({
-                        "page": page,
-                        "obj": "img",
-                        "id": base + 2,
-                        "x": img_x,
-                        "y": img_y,
-                        "w": img_w,
-                        "h": img_h,
-                        "src": img_src,
-                        "auto_size": 0,
-                    })
-                    out.fraimic_map.setdefault(ent, []).append((page, base + 2, entry_id))
-                    return
+            ha_url = get_url(hass) if hass is not None else "http://localhost:8123"
         except Exception:
-            pass
+            ha_url = "http://localhost:8123"
+        img_src = f"{ha_url}/api/dash480/camera_thumbnail/{ent}"
+        img_w = w - 16
+        img_h = h - 38
+        img_x = x + 8
+        img_y = y + 30
+        if img_w > 0 and img_h > 0:
+            out.objects.append({
+                "page": page,
+                "obj": "img",
+                "id": base + 2,
+                "x": img_x,
+                "y": img_y,
+                "w": img_w,
+                "h": img_h,
+                "src": img_src,
+                "auto_size": 0,
+            })
+            out.camera_map.setdefault(ent, []).append((page, base + 2, ent))
+            return
 
     is_battery = False
     if domain == "sensor":

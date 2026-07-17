@@ -17,37 +17,28 @@ import hashlib
 import io
 from PIL import Image
 
-class Dash480FraimicThumbnailView(HomeAssistantView):
-    """Serve the cached preview PNG/JPEG for a Fraimic frame,
+class Dash480CameraThumbnailView(HomeAssistantView):
+    """Serve a cached PNG snapshot for any HA camera entity,
     unauthenticated so the openHASP device can fetch it directly
     via HTTP."""
 
-    url = "/api/dash480/fraimic_thumbnail/{entry_id}"
-    name = "api:dash480:fraimic_thumbnail"
+    url = "/api/dash480/camera_thumbnail/{entity_id}"
+    name = "api:dash480:camera_thumbnail"
     requires_auth = False
 
-    async def get(self, request: web.Request, entry_id: str) -> web.Response:
+    async def get(self, request: web.Request, entity_id: str) -> web.Response:
         hass = request.app["hass"]
         
         try:
-            coordinator = hass.data.get("fraimic", {}).get(entry_id)
-            if not coordinator:
-                return web.Response(status=404, text="Frame not found")
+            from homeassistant.components import camera
+            try:
+                image = await camera.async_get_image(hass, entity_id)
+            except Exception as err:
+                _LOGGER.warning("Failed to get image for camera %s: %s", entity_id, err)
+                return web.Response(status=404, text=f"Camera image not available: {err}")
                 
-            thumbnail = getattr(coordinator, "last_thumbnail", None)
-            
-            if thumbnail is None:
-                image_id = getattr(coordinator, "last_image_id", None)
-                if image_id is not None:
-                    from custom_components.fraimic.library import _get_manager
-                    manager = _get_manager(hass)
-                    try:
-                        thumbnail = await manager.async_get_thumbnail(image_id, 240)
-                    except Exception:
-                        thumbnail, _ = await manager.async_get_original(image_id)
-            
-            if thumbnail is None:
-                return web.Response(status=404, text="No thumbnail available")
+            if not image or not image.content:
+                return web.Response(status=404, text="No image content available")
             
             # Ensure it is a PNG and resized to a maximum of 240px to fit well and save RAM
             def _convert():
@@ -56,7 +47,7 @@ class Dash480FraimicThumbnailView(HomeAssistantView):
                 except AttributeError:
                     resample_filter = Image.LANCZOS
                 
-                with Image.open(io.BytesIO(thumbnail)) as img:
+                with Image.open(io.BytesIO(image.content)) as img:
                     if img.width > 240 or img.height > 240:
                         img.thumbnail((240, 240), resample_filter)
                     out_buf = io.BytesIO()
@@ -75,7 +66,7 @@ class Dash480FraimicThumbnailView(HomeAssistantView):
                 headers={"ETag": etag, "Cache-Control": "private, no-cache"},
             )
         except Exception as err:
-            _LOGGER.exception("Error serving fraimic thumbnail for entry_id %s: %s", entry_id, err)
+            _LOGGER.exception("Error serving camera thumbnail for entity %s: %s", entity_id, err)
             return web.Response(status=500, text=f"Error: {err}")
 
 from .const import DOMAIN
@@ -179,7 +170,7 @@ async def async_setup(hass: HomeAssistant, config):
     if store.get("services_registered"):
         return True
 
-    hass.http.register_view(Dash480FraimicThumbnailView())
+    hass.http.register_view(Dash480CameraThumbnailView())
 
     async def _pick_entry_id(call) -> str | None:
         eid = call.data.get("entry_id")
@@ -431,7 +422,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         weather_map: dict,
         alloc_option_page,
         palette: dict,
-        fraimic_map: dict,
+        camera_map: dict,
         battery_map: dict,
     ) -> None:
         prev_p, next_p = ring_neighbors(ring, p)
@@ -495,8 +486,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             gauge_map.setdefault(ent, []).extend(targets)
         for ent, targets in render.weather_map.items():
             weather_map.setdefault(ent, []).extend(targets)
-        for ent, targets in getattr(render, "fraimic_map", {}).items():
-            fraimic_map.setdefault(ent, []).extend(targets)
+        for ent, targets in getattr(render, "camera_map", {}).items():
+            camera_map.setdefault(ent, []).extend(targets)
         for ent, targets in getattr(render, "battery_map", {}).items():
             battery_map.setdefault(ent, []).extend(targets)
         for option_spec in render.option_specs:
@@ -570,7 +561,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         fan_status_map: dict[str, list[tuple[int, tuple[str, int]]]] = {}
         gauge_map: dict[str, list[tuple[int, int, int, float, float]]] = {}
         weather_map: dict[str, list[tuple[int, int, int]]] = {}
-        fraimic_map: dict[str, list[tuple[int, int, str]]] = {}
+        camera_map: dict[str, list[tuple[int, int, str]]] = {}
         battery_map: dict[str, list[tuple[int, int, int]]] = {}
         option_specs: list[dict] = []
         option_open_map: dict[str, dict] = {}
@@ -594,7 +585,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 weather_map,
                 alloc_option_page,
                 palette,
-                fraimic_map,
+                camera_map,
                 battery_map,
             )
         option_close_map: dict[str, dict] = {}
@@ -610,7 +601,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN][entry.entry_id]["matrix_map"] = matrix_map
         hass.data[DOMAIN][entry.entry_id]["ent_toggle_map"] = ent_toggle_map
         hass.data[DOMAIN][entry.entry_id]["ent_matrix_map"] = ent_matrix_map
-        hass.data[DOMAIN][entry.entry_id]["fraimic_map"] = fraimic_map
+        hass.data[DOMAIN][entry.entry_id]["camera_map"] = camera_map
         hass.data[DOMAIN][entry.entry_id]["battery_map"] = battery_map
         hass.data[DOMAIN][entry.entry_id]["color_btn_map"] = color_btn_map
         hass.data[DOMAIN][entry.entry_id]["fan_status_map"] = fan_status_map
@@ -755,16 +746,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             unsub = async_track_state_change_event(hass, [ent], cb)
             hass.data[DOMAIN][entry.entry_id][f"unsub_weather_{ent}"] = unsub
 
-        # rewire fraimic listeners
+        # rewire camera listeners
         for key in list(hass.data[DOMAIN][entry.entry_id].keys()):
-            if key.startswith("unsub_fraimic_"):
+            if key.startswith("unsub_camera_"):
                 u = hass.data[DOMAIN][entry.entry_id].pop(key)
                 try:
                     u()
                 except Exception:
                     pass
-        for ent in fraimic_map:
-            def _make_fraimic_cb(eid: str):
+        for ent in camera_map:
+            def _make_camera_cb(eid: str):
                 async def _cb(event):
                     from homeassistant.helpers.network import get_url
                     import time
@@ -772,13 +763,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         ha_url = get_url(hass)
                     except Exception:
                         ha_url = "http://localhost:8123"
-                    for (pnum, img_id, config_entry_id) in fraimic_map.get(eid, []):
-                        url = f"{ha_url}/api/dash480/fraimic_thumbnail/{config_entry_id}?v={int(time.time())}"
+                    for (pnum, img_id, entity_id) in camera_map.get(eid, []):
+                        url = f"{ha_url}/api/dash480/camera_thumbnail/{entity_id}?v={int(time.time())}"
                         await mqtt.async_publish(hass, f"hasp/{node_name}/command/p{pnum}b{img_id}.src", url)
                 return _cb
-            cb = _make_fraimic_cb(ent)
+            cb = _make_camera_cb(ent)
             unsub = async_track_state_change_event(hass, [ent], cb)
-            hass.data[DOMAIN][entry.entry_id][f"unsub_fraimic_{ent}"] = unsub
+            hass.data[DOMAIN][entry.entry_id][f"unsub_camera_{ent}"] = unsub
 
         # rewire battery listeners
         for key in list(hass.data[DOMAIN][entry.entry_id].keys()):

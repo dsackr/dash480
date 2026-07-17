@@ -60,11 +60,11 @@ Renders weather entities as summary condition text/icon tiles and maps state upd
 - **If it silently breaks**: Weather tiles do not display or weather conditions/temperatures fail to sync.
 - **Test status**: **Backend-tested** — `tests/test_layout.py` (`WeatherTests`).
 
-## 10. Fraimic Camera Thumbnail Integration
-Detects Fraimic integration camera entities, rendering them as unauthenticated PNG image objects, and pushes cache-busted source updates when the frame's image refreshes.
-- **Entry points**: `layout.py` (`_dispatch_entity_content`), `__init__.py` (`Dash480FraimicThumbnailView`, `_make_fraimic_cb`).
-- **If it silently breaks**: E-ink frame display tiles are blank or fail to update when a new photo is pushed.
-- **Test status**: **Gap** (tested manually).
+## 10. Generic Camera Thumbnail Integration
+Detects any Home Assistant camera entity, rendering it as an unauthenticated PNG image object, and pushes cache-busted source updates when the camera state or snapshot changes.
+- **Entry points**: `layout.py` (`_dispatch_entity_content`), `__init__.py` (`Dash480CameraThumbnailView`, `_make_camera_cb`).
+- **If it silently breaks**: Camera display tiles are blank or fail to update when the camera receives a new snapshot.
+- **Test status**: **Backend-tested** — `tests/test_layout.py` (`test_camera_tile_renders_generic_image`).
 
 ## 11. Custom Battery Progress Icon
 Renders battery level sensors as graphical battery shapes (border outline, terminal cap, color thresholds, and inner progress fill) instead of a simple text percentage value.
