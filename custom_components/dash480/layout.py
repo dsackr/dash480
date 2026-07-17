@@ -587,7 +587,16 @@ def _dispatch_entity_content(
         except Exception:
             pass
 
-    if domain == "sensor" and "battery" in ent.lower():
+    is_battery = False
+    if domain == "sensor":
+        if "battery" in ent.lower():
+            is_battery = True
+        elif label and "battery" in label.lower():
+            is_battery = True
+        elif st and st.attributes.get("device_class") == "battery":
+            is_battery = True
+
+    if is_battery:
         try:
             pct = int(float(st.state)) if st and st.state not in (None, "unknown", "unavailable") else 50
         except (ValueError, TypeError):

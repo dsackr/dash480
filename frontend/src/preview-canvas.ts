@@ -195,7 +195,7 @@ export class Dash480PreviewCanvas extends LitElement {
     const isGauge = tile.type === "gauge";
     const isWeather = tile.type === "weather";
     const isCamera = tile.entity_id?.startsWith("camera.");
-    const isBattery = tile.entity_id?.toLowerCase().includes("battery");
+    const isBattery = tile.entity_id?.toLowerCase().includes("battery") || t.friendly_name?.toLowerCase().includes("battery");
     let pct = 0;
     if (isGauge) {
       const min = tile.min ?? 0;
