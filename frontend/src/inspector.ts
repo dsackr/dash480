@@ -153,6 +153,26 @@ export class Dash480Inspector extends LitElement {
 
   // ---------- Mode B: add tile ----------
 
+  private _addClockTile() {
+    if (this.selection.kind !== "cell") return;
+    const { row, col } = this.selection;
+    // Ensure cell is free
+    if (!fitsAt(row, col, 1, 1, this.page.rows, this.page.columns, occupiedCells(this.page.tiles))) {
+      this._addError = "That cell is now occupied — pick another cell.";
+      return;
+    }
+    this._addError = "";
+    const tile: VisualTile = {
+      id: `t${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+      type: "clock",
+      row,
+      col,
+      rs: 1,
+      cs: 1,
+    };
+    this._emit("tile-added", { tile });
+  }
+
   private _onAddEntityPicked(e: CustomEvent<{ entity: CompatibleEntity }>) {
     if (this.selection.kind !== "cell") return;
     const { row, col } = this.selection;
@@ -189,16 +209,19 @@ export class Dash480Inspector extends LitElement {
       <h3>Add tile</h3>
       <div class="meta">Row ${sel.row + 1}, column ${sel.col + 1}</div>
       ${this._renderTypeButtons(this._addType, (t) => (this._addType = t))}
-      <label class="field">
-        <span>Entity</span>
-        <dash480-entity-select
-          .hass=${this.hass}
-          .tileType=${this._addType}
-          @entity-selected=${this._onAddEntityPicked}
-        ></dash480-entity-select>
-      </label>
-      ${this._addError ? html`<div class="error">${this._addError}</div>` : nothing}
-      <div class="hint">The tile is added as soon as you pick an entity — you can adjust everything afterwards.</div>
+      ${this._addType !== "clock" ? html`
+        <label class="field">
+          <span>Entity</span>
+          <dash480-entity-select
+            .hass=${this.hass}
+            .tileType=${this._addType}
+            @entity-selected=${this._onAddEntityPicked}
+          >
+          </dash480-entity-select>
+        </label>
+        ${this._addError ? html`<div class="error">${this._addError}</div>` : nothing}
+      ` : html`<button class="submit" @click=${this._addClockTile}>Add clock</button>`}
+      <div class="hint">${this._addType === "clock" ? "The clock tile has no settings." : "The tile is added as soon as you pick an entity — you can adjust everything afterwards."}</div>
     `;
   }
 
@@ -207,6 +230,7 @@ export class Dash480Inspector extends LitElement {
       { value: "entity", label: "Entity" },
       { value: "gauge", label: "Gauge" },
       { value: "weather", label: "Weather" },
+      { value: "clock", label: "Clock" },
     ];
     return html`
       <div class="segmented">
@@ -333,24 +357,26 @@ export class Dash480Inspector extends LitElement {
         <span>Type</span>
         ${this._renderTypeButtons(tile.type, (t) => this._changeTileType(tile, t))}
       </label>
-      <label class="field">
-        <span>Entity</span>
-        <dash480-entity-select
-          .hass=${this.hass}
-          .tileType=${tile.type}
-          .value=${tile.entity_id}
-          .warning=${entityCompatible
-            ? undefined
-            : tile.type === "gauge"
-              ? "This entity isn't currently numeric — the gauge may not render."
-              : "This entity isn't compatible with this tile type."}
-          @entity-selected=${(e: CustomEvent<{ entity: CompatibleEntity }>) => this._onEditEntityPicked(tile, e)}
-        ></dash480-entity-select>
-      </label>
-      ${!tile.entity_id
-        ? html`<div class="error">No entity selected — this tile won't show on the device.</div>`
-        : nothing}
-      ${tile.type === "gauge"
+      ${tile.type !== "clock" ? html`
+        <label class="field">
+          <span>Entity</span>
+          <dash480-entity-select
+            .hass=${this.hass}
+            .tileType=${tile.type}
+            .value=${tile.entity_id}
+            .warning=${entityCompatible
+              ? undefined
+              : tile.type === "gauge"
+                ? "This entity isn't currently numeric — the gauge may not render."
+                : "This entity isn't compatible with this tile type."}
+            @entity-selected=${(e: CustomEvent<{ entity: CompatibleEntity }>) => this._onEditEntityPicked(tile, e)}
+          >
+          </dash480-entity-select>
+        </label>
+        ${!tile.entity_id
+          ? html`<div class="error">No entity selected — this tile won't show on the device.</div>`
+          : nothing}
+        ` : nothing}      ${tile.type === "gauge"
         ? html`
             <div class="row2">
               <label class="field">

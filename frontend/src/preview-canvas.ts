@@ -196,6 +196,7 @@ export class Dash480PreviewCanvas extends LitElement {
     const isWeather = tile.type === "weather";
     const isCamera = tile.entity_id?.startsWith("camera.");
     const isBattery = tile.entity_id?.toLowerCase().includes("battery") || t.friendly_name?.toLowerCase().includes("battery");
+    const isClock = tile.type === "clock";
     let pct = 0;
     if (isGauge) {
       const min = tile.min ?? 0;
@@ -254,7 +255,13 @@ export class Dash480PreviewCanvas extends LitElement {
                             </div>
                           `;
                         })()
-                      : html`<div class="tile-state">${t.state ?? "--"}</div>`}
+                      : isClock
+                        ? html`
+                            <div class="clock-time" style="font-size: 24px; font-weight: bold; text-align: center; margin-top: 8px;">
+                              ${this._now.getHours().toString().padStart(2, '0')}:${this._now.getMinutes().toString().padStart(2, '0')}
+                            </div>
+                          `
+                        : html`<div class="tile-state">${t.state ?? "--"}</div>`}
             `}
         ${selected
           ? html`
@@ -267,6 +274,22 @@ export class Dash480PreviewCanvas extends LitElement {
           : nothing}
       </div>
     `;
+  }
+
+  @state() private _now: Date = new Date();
+  private _clockTimer: ReturnType<typeof setInterval> | null = null;
+
+  connectedCallback(): void {
+    super.connectedCallback();
+    this._clockTimer = setInterval(() => {
+      this._now = new Date();
+      this.requestUpdate();
+    }, 1000);
+  }
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+    if (this._clockTimer) clearInterval(this._clockTimer);
   }
 
   static styles = css`

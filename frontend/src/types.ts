@@ -66,7 +66,7 @@ export interface IconChoice {
   code: string;
 }
 
-export type TileType = "entity" | "gauge" | "weather";
+export type TileType = "entity" | "gauge" | "weather" | "clock";
 
 // What the editor's inspector is focused on: nothing (page settings),
 // an empty cell (add-tile form), or an existing tile (its properties).
