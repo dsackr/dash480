@@ -222,22 +222,9 @@ async def async_setup(hass: HomeAssistant, config):
         new_opts = {**entry.options, "home_title": title or entry.data.get("node_name", "Dash")}
         hass.config_entries.async_update_entry(entry, options=new_opts)
 
-    async def svc_set_temp_entity(call):
-        eid = await _pick_entry_id(call)
-        if not eid:
-            return
-        ent = str(call.data.get("temp_entity", "")).strip()
-        entry = hass.config_entries.async_get_entry(eid)
-        if not entry:
-            _LOGGER.warning("Dash480: entry not found for set_temp_entity: %s", eid)
-            return
-        new_opts = {**entry.options, "temp_entity": ent}
-        hass.config_entries.async_update_entry(entry, options=new_opts)
-
     hass.services.async_register(DOMAIN, "publish_all", svc_publish_all)
     hass.services.async_register(DOMAIN, "publish_home", svc_publish_home)
     hass.services.async_register(DOMAIN, "set_home_title", svc_set_home_title)
-    hass.services.async_register(DOMAIN, "set_temp_entity", svc_set_temp_entity)
 
     async def svc_dump_layout(call):
         """Build the full JSONL layout and dump to a file (no publish).
@@ -255,15 +242,13 @@ async def async_setup(hass: HomeAssistant, config):
             return
         node_name = entry.data.get("node_name")
         home_title = entry.options.get("home_title", node_name)
-        temp_entity = entry.options.get("temp_entity", "")
         theme = entry.options.get("theme", "dark")
         sun_state = hass.states.get("sun.sun")
         sun_above = sun_state.state == "above_horizon" if sun_state else None
         palette = resolve_palette(theme, sun_above)
 
         lines: list[str] = []
-        tval = display_state(hass.states.get(temp_entity) if temp_entity else None)
-        lines.extend(json.dumps(obj) for obj in header_footer_objects(node_name, home_title, tval, palette))
+        lines.extend(json.dumps(obj) for obj in header_footer_objects(node_name, home_title, palette))
 
         merged_pages = await _gather_panel_pages(hass, eid)
         page_numbers = [order for order, _, _ in merged_pages]
@@ -340,7 +325,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Panel entry setup
     node_name = entry.data["node_name"]
     home_title = entry.options.get("home_title", node_name)
-    temp_entity = entry.options.get("temp_entity", "")
     theme = entry.options.get("theme", "dark")
     # control map (id -> entity_id) and sensor text map (entity -> list of (page,id))
     hass.data[DOMAIN][entry.entry_id]["ctrl_map"] = {}
@@ -373,14 +357,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             unsub_sun = async_track_state_change_event(hass, ["sun.sun"], _on_sun_change)
             hass.data[DOMAIN][entry.entry_id]["unsub_sun"] = unsub_sun
 
-    # helper to publish current temp to header right label (p0b3)
-    async def _publish_temp(value: str) -> None:
-        await mqtt.async_publish(
-            hass,
-            f"hasp/{node_name}/command/p0b3.text",
-            value if value else "--",
-        )
-
     async def _push_home_layout() -> None:
         """Clear and push header/footer + home page.
 
@@ -395,8 +371,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             return
         await mqtt.async_publish(hass, f"hasp/{node_name}/command/clearpage", "all")
         palette = _current_palette()
-        temp_text = display_state(hass.states.get(temp_entity)) if temp_entity else ""
-        for obj in header_footer_objects(node_name, home_title, temp_text, palette):
+        for obj in header_footer_objects(node_name, home_title, palette):
             await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", json.dumps(obj))
         page_numbers = [order for order, _, _ in merged_pages]
         ring = build_page_ring(page_numbers)
@@ -538,9 +513,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.info("Dash480: publishing all for node=%s", node_name)
         palette = _current_palette()
         await mqtt.async_publish(hass, f"hasp/{node_name}/command/clearpage", "all")
-        # Header/footer
-        tval = display_state(hass.states.get(temp_entity) if temp_entity else None)
-        for obj in header_footer_objects(node_name, home_title, tval, palette):
+        # Header/footer. p0b3 is a plate-drawn clock label; do not publish its .text.
+        for obj in header_footer_objects(node_name, home_title, palette):
             await mqtt.async_publish(hass, f"hasp/{node_name}/command/jsonl", json.dumps(obj))
         # Build page list from legacy Page entries + visual pages linked to this panel
         merged_pages = await _gather_panel_pages(hass, entry.entry_id)
@@ -1165,37 +1139,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unsub_events = await mqtt.async_subscribe(hass, f"hasp/{node_name}/state/#", _state_event)
     hass.data[DOMAIN][entry.entry_id]["unsub_events"] = unsub_events
 
-    # Track temp entity changes
-    async def _on_temp_change(event):
-        if not temp_entity:
-            return
-        await _publish_temp(display_state(hass.states.get(temp_entity)))
-
-    if temp_entity:
-        unsub_temp = async_track_state_change_event(hass, [temp_entity], _on_temp_change)
-        hass.data[DOMAIN][entry.entry_id]["unsub_temp"] = unsub_temp
-
     # Arm sun tracking immediately if this panel starts in follow_sun mode.
     await _sync_theme_tracking()
 
     # React to options changes (from Configure dialog or services)
     async def _options_updated(hass_: HomeAssistant, updated: ConfigEntry):
-        nonlocal home_title, temp_entity, theme
+        nonlocal home_title, theme
         home_title = updated.options.get("home_title", updated.data.get("node_name", "Dash"))
-        new_temp = updated.options.get("temp_entity", "")
-        if new_temp != temp_entity:
-            # resubscribe to temp entity changes
-            unsub_prev = hass.data[DOMAIN][entry.entry_id].get("unsub_temp")
-            if unsub_prev:
-                unsub_prev()
-                hass.data[DOMAIN][entry.entry_id]["unsub_temp"] = None
-            temp_entity = new_temp
-            if temp_entity:
-                unsub_new = async_track_state_change_event(hass, [temp_entity], _on_temp_change)
-                hass.data[DOMAIN][entry.entry_id]["unsub_temp"] = unsub_new
-            # push current temp immediately
-            await _publish_temp(display_state(hass.states.get(temp_entity) if temp_entity else None))
-        # Update title immediately
+        # Update title immediately. Leave p0b3 alone — it is the plate clock.
         await mqtt.async_publish(hass, f"hasp/{node_name}/command/p0b2.text", home_title)
         new_theme = updated.options.get("theme", "dark")
         if new_theme != theme:
@@ -1230,28 +1181,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         home_title = new_opts["home_title"]
         await mqtt.async_publish(hass, f"hasp/{node_name}/command/p0b2.text", home_title)
 
-    async def _svc_set_temp_entity(call: ServiceCall):
-        nonlocal temp_entity
-        e = await _resolve_entry(call)
-        if not e:
-            return
-        temp = str(call.data.get("temp_entity", "")).strip()
-        new_opts = {**e.options, "temp_entity": temp}
-        hass.config_entries.async_update_entry(e, options=new_opts)
-        # Update subscription to new entity and push current value to header
-        temp_entity = temp
-        # tear down old tracker if present
-        unsub_temp_prev = hass.data[DOMAIN][entry.entry_id].get("unsub_temp")
-        if unsub_temp_prev:
-            unsub_temp_prev()
-            hass.data[DOMAIN][entry.entry_id]["unsub_temp"] = None
-        # publish current value
-        await _publish_temp(display_state(hass.states.get(temp_entity) if temp_entity else None))
-        # re-subscribe for future updates
-        if temp_entity:
-            unsub_temp_new = async_track_state_change_event(hass, [temp_entity], _on_temp_change)
-            hass.data[DOMAIN][entry.entry_id]["unsub_temp"] = unsub_temp_new
-
     async def _svc_publish_home(call: ServiceCall):
         await _push_home_layout()
 
@@ -1277,9 +1206,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unsub_events = hass.data[DOMAIN][entry.entry_id].get("unsub_events")
     if unsub_events:
         unsub_events()
-    unsub_temp = hass.data[DOMAIN][entry.entry_id].get("unsub_temp")
-    if unsub_temp:
-        unsub_temp()
     unsub_sun = hass.data[DOMAIN][entry.entry_id].get("unsub_sun")
     if unsub_sun:
         unsub_sun()

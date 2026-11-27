@@ -21,7 +21,6 @@ async def async_setup_entry(
     if role == "panel":
         entities.append(Dash480NodeNameText(hass, config_entry))
         entities.append(Dash480HomeTitleText(hass, config_entry))
-        entities.append(Dash480TempEntityText(hass, config_entry))
     else:
         # Page-specific title and slots
         p = int(config_entry.data.get("page_order", 2))
@@ -113,24 +112,6 @@ class Dash480HomeTitleText(_BaseDashText):
     async def async_set_value(self, value: str) -> None:
         # Persist into options
         opts = {**self.config_entry.options, "home_title": value}
-        self.hass.config_entries.async_update_entry(self.config_entry, options=opts)
-        self._attr_native_value = value
-        self.async_write_ha_state()
-
-
-class Dash480TempEntityText(_BaseDashText):
-    """Header temperature entity (entity_id string)."""
-
-    _attr_entity_category = EntityCategory.CONFIG
-
-    def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry) -> None:
-        super().__init__(hass, config_entry)
-        self._attr_name = "Temp Entity"
-        self._attr_unique_id = f"{self._device_identifier}_temp_entity"
-        self._attr_native_value = config_entry.options.get("temp_entity", "")
-
-    async def async_set_value(self, value: str) -> None:
-        opts = {**self.config_entry.options, "temp_entity": value}
         self.hass.config_entries.async_update_entry(self.config_entry, options=opts)
         self._attr_native_value = value
         self.async_write_ha_state()

@@ -28,9 +28,6 @@ class Dash480OptionsFlowHandler(config_entries.OptionsFlow):
                     vol.Optional(
                         "home_title", default=options.get("home_title", self.config_entry.data.get("node_name", "Dash"))
                     ): selector({"text": {}}),
-                    vol.Optional(
-                        "temp_entity", default=options.get("temp_entity", "")
-                    ): selector({"entity": {"domain": "sensor"}}),
                 }
             )
             return self.async_show_form(step_id="init", data_schema=data_schema)

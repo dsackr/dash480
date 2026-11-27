@@ -309,12 +309,19 @@ def option_page_allocator(start: int = 50) -> Callable[[], int]:
 # ---------------------------------------------------------------------------
 
 def header_footer_objects(
-    node_name: str, title: str, temp_text: str, palette: dict = DARK_PALETTE
+    node_name: str, title: str, palette: dict = DARK_PALETTE
 ) -> list[dict]:
-    """Persistent page-0 chrome: header bar (date/title/temp) + nav footer.
+    """Persistent page-0 chrome: header bar (date/title/clock) + nav footer.
 
     Always drawn regardless of what page 1 shows — this is independent of
     whether page 1 is the hardcoded fallback or a user-configured Page entry.
+
+    The right slot is a label, not a button. openHASP only honors `template`
+    on labels (it is ignored on btn), and the plate refreshes that template
+    from its own clock — no Home Assistant `sensor.time` required. Nothing
+    may publish `p0b3.text` afterwards or it will replace the clock until
+    the next template tick. `%H:%M` is the same format as the home clock and
+    fits this 148px slot at the header's 35px font; `12:45 PM` does not.
     """
     return [
         {"page": 0, "id": 0, "obj": "page"},
@@ -328,10 +335,9 @@ def header_footer_objects(
          "text": title, "text_font": 35, "text_color": palette["header_title_text"], "bg_opa": 0,
          "border_width": 0, "radius": 0, "outline_width": 0, "shadow_width": 0,
          "toggle": False, "mode": "dots", "align": "center"},
-        {"page": 0, "id": 3, "obj": "btn", "x": 320, "y": 8, "w": 148, "h": 40,
-         "text": temp_text or "--", "text_font": 24, "align": "right",
-         "text_color": palette["text"], "bg_opa": 0, "border_width": 0, "radius": 0,
-         "outline_width": 0, "shadow_width": 0, "toggle": False},
+        {"page": 0, "id": 3, "obj": "label", "x": 320, "y": 8, "w": 148, "h": 40,
+         "text": "00:00", "template": "%H:%M", "text_font": 35, "align": "right",
+         "text_color": palette["text"], "bg_opa": 0},
         {"page": 0, "id": 90, "obj": "btn", "action": {"down": "page prev"}, "x": 0, "y": 430,
          "w": 160, "h": 50, "bg_color": palette["nav_btn_bg"], "text": "",
          "text_color": palette["nav_btn_text"],

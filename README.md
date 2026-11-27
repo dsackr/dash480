@@ -5,7 +5,7 @@ This custom integration provides seamless integration for an openHASP 480×480 p
 ## Features
 
 - **Simple Setup**: Add a Panel, then add Pages from the Integrations UI.
-- **Header Controls**: Set Home Title and a Temp sensor for the header from HA.
+- **Header Controls**: Set the Home Title from HA. The header shows the date on the left and the panel clock on the right.
 - **Relay Switches**: Three switches for onboard relays (optional, if wired).
 - **Popup Controls for Tiles**:
   - Fans: tapping the fan tile opens a popup with Off/Low/Med/High.
@@ -51,8 +51,8 @@ This custom integration provides seamless integration for an openHASP 480×480 p
     - Go to **Settings** > **Devices & Services** > Dash480 panel > **Configure**.
     - Set:
       - Home Title: center title in the header (defaults to node name).
-      - Temp Entity: sensor to show at top-right (optional).
-    - Save. The header will update; the full layout is pushed when the device comes online (MQTT LWT `online`).
+    - The top-left date and top-right time are drawn by the panel itself (`%b %d` and `%H:%M`). They do not use a Home Assistant time or temperature sensor.
+    - Save. The header title will update; the full layout is pushed when the device comes online (MQTT LWT `online`).
 
 4.  **Device Creation**:
     -   The integration will be added, and you will see a new "Dash480" device with its associated entities (relays and node name).

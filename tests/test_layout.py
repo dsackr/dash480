@@ -244,15 +244,41 @@ class OptionPageTests(unittest.TestCase):
 
 
 class HeaderFooterTests(unittest.TestCase):
-    def test_title_and_temp_survive_quotes(self):
-        objects = layout.header_footer_objects("plate", 'Dash "Home"', "72°")
+    def test_title_survives_quotes(self):
+        objects = layout.header_footer_objects("plate", 'Dash "Home"')
         for obj in objects:
             json.dumps(obj)  # must not raise
         title_obj = next(o for o in objects if o.get("id") == 2 and o.get("page") == 0)
         self.assertEqual(title_obj["text"], 'Dash "Home"')
 
+    def test_header_right_is_plate_clock(self):
+        # Top-right is the panel clock, not a temperature pushed from HA.
+        # openHASP applies `template` on labels only, and this object has no
+        # tap action — live p0b3.text updates would overwrite the clock.
+        objects = layout.header_footer_objects("plate", "Dash")
+        clock = next(o for o in objects if o.get("page") == 0 and o.get("id") == 3)
+        self.assertEqual(clock["obj"], "label")
+        self.assertEqual(clock["template"], "%H:%M")
+        self.assertEqual(clock["text"], "00:00")
+        self.assertEqual(clock["align"], "right")
+        self.assertEqual(clock["x"], 320)
+        self.assertEqual(clock["w"], 148)
+        self.assertEqual(clock["text_font"], 35)
+        self.assertNotIn("action", clock)
+        date = next(o for o in objects if o.get("page") == 0 and o.get("id") == 1)
+        self.assertEqual(date["obj"], "label")
+        self.assertEqual(date["template"], "%b %d")
+        json.dumps(clock)
+
+    def test_publisher_does_not_overwrite_header_clock(self):
+        # p0b3.text would replace the strftime template until the next tick.
+        init_py = Path(__file__).resolve().parents[1] / "custom_components" / "dash480" / "__init__.py"
+        source = init_py.read_text(encoding="utf-8")
+        self.assertNotIn("p0b3.text", source)
+        self.assertNotIn("temp_entity", source)
+
     def test_nav_icons_survive_json_roundtrip(self):
-        objects = layout.header_footer_objects("plate", "Dash", "--")
+        objects = layout.header_footer_objects("plate", "Dash")
         nav_objs = [o for o in objects if o.get("page") == 0 and o.get("id") in (90, 91, 92)]
         self.assertEqual(len(nav_objs), 3)
         for obj in nav_objs:
