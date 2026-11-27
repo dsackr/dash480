@@ -126,8 +126,13 @@ GAUGE_SEVERITY_COLORS = {
     "red": "#DB4437",
 }
 GAUGE_SEVERITY_KEYS = ("green", "yellow", "red")
-# Near-black reads on all three band colors, matching HA's needle gauge.
-GAUGE_NEEDLE_COLOR = "#111827"
+# Bright core over a near-black backing. White alone sinks into the yellow
+# band, and a thin dark stroke sinks into green and red; the pair stays
+# readable on every band and on both light and dark tile backgrounds.
+# The backing is its own `line` (openHASP outline/shadow follow the widget
+# box, not the stroke) and uses the one free id inside TILE_ID_BUDGET.
+GAUGE_NEEDLE_COLOR = "#FFFFFF"
+GAUGE_NEEDLE_BACKING_COLOR = "#111827"
 
 # Classic openHASP gauge sweep: 135° (lower left) clockwise 270° to 45°
 # (lower right). 0° is 3 o'clock and angles increase clockwise, so screen
@@ -136,10 +141,13 @@ GAUGE_START_ANGLE = 135
 GAUGE_SWEEP = 270
 
 # Per severity gauge, within TILE_ID_BUDGET (base .. base+7):
-# base title, base+1 card, base+2..+4 band arcs, base+5 needle, base+6 value.
+# base title, base+1 card, base+2..+4 band arcs, base+5 needle core,
+# base+6 value, base+7 needle backing. The backing is created before the
+# core so the bright stroke paints on top of the outline.
 GAUGE_BAND_ID_OFFSETS = (2, 3, 4)
 GAUGE_NEEDLE_ID_OFFSET = 5
 GAUGE_VALUE_ID_OFFSET = 6
+GAUGE_NEEDLE_BACKING_ID_OFFSET = 7
 
 
 def _json_number(value: float) -> int | float:
@@ -286,8 +294,9 @@ class GaugeTarget:
     """One gauge tile's live-update target.
 
     A plain gauge sets `arc_id` (the single arc's `.val`). A severity gauge
-    sets `needle_id` plus the line object's local geometry; its band arcs are
-    static and are not updated when the sensor changes.
+    sets `needle_id` and `backing_id` plus the line object's local geometry;
+    its band arcs are static and are not updated when the sensor changes.
+    Both lines share that geometry — only the stroke width and color differ.
     """
 
     page: int
@@ -296,6 +305,7 @@ class GaugeTarget:
     gmax: float
     arc_id: int | None = None
     needle_id: int | None = None
+    backing_id: int | None = None
     center_x: float = 0.0
     center_y: float = 0.0
     inner_radius: float = 0.0
@@ -307,7 +317,9 @@ def gauge_live_updates(target: GaugeTarget, state: Any) -> list[tuple[str, str]]
 
     Suffixes are relative to `hasp/<node>/command/` (for example `p2b5.points`).
     The needle payload is an openHASP `points` JSON array. The value label is
-    always published; a plain gauge also publishes the arc `.val`.
+    always published; a plain gauge also publishes the arc `.val`. A severity
+    gauge publishes the backing line's points first, then the core, so the
+    outline and the bright stroke stay together as the value moves.
     """
     clamped = gauge_arc_value(state, target.gmin, target.gmax)
     updates: list[tuple[str, str]] = []
@@ -318,16 +330,42 @@ def gauge_live_updates(target: GaugeTarget, state: Any) -> list[tuple[str, str]]
             target.center_x, target.center_y, target.inner_radius, target.outer_radius,
             clamped, target.gmin, target.gmax,
         )
-        updates.append((
-            f"p{target.page}b{target.needle_id}.points",
-            json.dumps(points, separators=(",", ":")),
-        ))
+        payload = json.dumps(points, separators=(",", ":"))
+        if target.backing_id is not None:
+            updates.append((f"p{target.page}b{target.backing_id}.points", payload))
+        updates.append((f"p{target.page}b{target.needle_id}.points", payload))
     updates.append((f"p{target.page}b{target.label_id}.text", gauge_display_value(state)))
     return updates
 
 
 def _gauge_stroke(arc_size: int) -> int:
     return max(6, min(18, arc_size // 8))
+
+
+def gauge_needle_widths(arc_size: int) -> tuple[int, int]:
+    """(core, backing) stroke widths in pixels for a severity needle.
+
+    The core is a bit over half the band thickness. The backing is 4 px
+    wider (2 px of dark edge on each side) and may run slightly past the
+    band so that edge still shows when the tip sits on the color. The old
+    needle was `arc_size // 28` (about 3 px on a normal tile), which
+    disappeared into the bands on the 480×480 panel.
+    """
+    stroke = _gauge_stroke(arc_size)
+    core = max(5, min(stroke, (stroke * 5) // 8))
+    return core, core + 4
+
+
+def gauge_needle_radii(arc_size: int, backing_width: int) -> tuple[float, float]:
+    """Pivot and tip radii for the needle, in the arc widget's local pixels.
+
+    The line starts at the pivot so the rounded cap reads as a center hub.
+    The tip is inset by half the backing width: that cap then lands on the
+    outer rim of the band instead of being clipped by the widget.
+    """
+    center = arc_size / 2.0
+    outer = max(4.0, center - backing_width / 2.0)
+    return 0.0, outer
 
 
 # MDI codepoints (from openHASP's font reference) for HA's standard weather
@@ -627,8 +665,9 @@ class PageRender:
     fan_status_map: dict[str, list[tuple[int, tuple[str, int]]]] = field(default_factory=dict)
     option_specs: list[dict] = field(default_factory=list)
     # entity -> gauge live-update targets. A plain gauge publishes the arc's
-    # .val; a severity gauge publishes the needle line's .points. Both also
-    # publish the value label's .text. Band arcs are static.
+    # .val; a severity gauge publishes the backing line's .points and then
+    # the needle core's .points. Both also publish the value label's .text.
+    # Band arcs are static.
     gauge_map: dict[str, list[GaugeTarget]] = field(default_factory=dict)
     # entity -> list of (page, icon_label_id, temp_label_id) — a weather
     # tile's live-update needs both the condition icon and the temperature
@@ -1040,13 +1079,16 @@ def _render_gauge(
     """Append a gauge tile: a severity needle gauge, or the plain single arc.
 
     The needle gauge is three stacked openHASP arcs (one per severity band,
-    each spanning its share of the 270° sweep) plus a `line` needle and the
-    value label. That is 7 objects with the card background and title already
-    drawn by the caller: base+1 card, base title, base+2..+4 bands, base+5
-    needle, base+6 value — inside TILE_ID_BUDGET. Bands are fully filled
+    each spanning its share of the 270° sweep) plus two `line` objects (a
+    dark backing and a bright core that share endpoints) and the value label.
+    That is 8 objects with the card background and title already drawn by
+    the caller: base+1 card, base title, base+2..+4 bands, base+5 needle,
+    base+6 value, base+7 backing — exactly TILE_ID_BUDGET. The backing is
+    appended before the core so it paints underneath. Bands are fully filled
     (`val` at max) and colored on both the background stroke (`line_color`)
     and the indicator stroke (`line_color10`); openHASP 0.7 paints an arc
-    with those properties, not `arc_color`.
+    with those properties, not `arc_color`. Widget outline and shadow stay
+    off: on a `line` they follow the bounding box, not the stroke.
 
     Tiles with no usable `severity` keep the original single arc so existing
     gauges look the same.
@@ -1094,16 +1136,25 @@ def _render_gauge(
         })
 
     center = arc_size / 2.0
-    inner_radius = arc_size * 0.12
-    outer_radius = max(inner_radius + 4, center - stroke / 2.0)
-    needle_id = base + GAUGE_NEEDLE_ID_OFFSET
+    core_width, backing_width = gauge_needle_widths(arc_size)
+    inner_radius, outer_radius = gauge_needle_radii(arc_size, backing_width)
     points = gauge_needle_points(center, center, inner_radius, outer_radius, val, gmin, gmax)
-    out.objects.append({
-        "page": page, "obj": "line", "id": needle_id, "x": arc_x, "y": arc_y,
-        "w": arc_size, "h": arc_size, "points": points, "auto_size": 0, "y_invert": 0,
-        "line_width": max(2, arc_size // 28), "line_color": GAUGE_NEEDLE_COLOR,
-        "line_rounded": 1, "click": False,
-    })
+    backing_id = base + GAUGE_NEEDLE_BACKING_ID_OFFSET
+    needle_id = base + GAUGE_NEEDLE_ID_OFFSET
+
+    def _needle_line(obj_id: int, width: int, color: str) -> dict:
+        return {
+            "page": page, "obj": "line", "id": obj_id, "x": arc_x, "y": arc_y,
+            "w": arc_size, "h": arc_size, "points": [list(p) for p in points],
+            "auto_size": 0, "y_invert": 0,
+            "line_width": width, "line_color": color, "line_rounded": 1,
+            "bg_opa": 0, "border_width": 0, "outline_width": 0, "shadow_width": 0,
+            "click": False,
+        }
+
+    # Backing first so the bright core (and the value label after it) paint on top.
+    out.objects.append(_needle_line(backing_id, backing_width, GAUGE_NEEDLE_BACKING_COLOR))
+    out.objects.append(_needle_line(needle_id, core_width, GAUGE_NEEDLE_COLOR))
 
     value_label_id = base + GAUGE_VALUE_ID_OFFSET
     out.objects.append({"page": page, "obj": "label", "id": value_label_id, "x": arc_x,
@@ -1111,7 +1162,8 @@ def _render_gauge(
                          "text": gauge_display_value(st), "text_font": 20, "align": "center",
                          "text_color": palette["text"], "bg_opa": 0, "mode": "dots"})
     out.gauge_map.setdefault(ent, []).append(GaugeTarget(
-        page=page, label_id=value_label_id, gmin=gmin, gmax=gmax, needle_id=needle_id,
+        page=page, label_id=value_label_id, gmin=gmin, gmax=gmax,
+        needle_id=needle_id, backing_id=backing_id,
         center_x=center, center_y=center, inner_radius=inner_radius, outer_radius=outer_radius,
     ))
 

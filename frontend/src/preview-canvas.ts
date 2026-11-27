@@ -5,6 +5,9 @@ import { DEVICE_PX, Rect, cellFromPoint, cellRect, fitsAt, occupiedCells, spanRe
 
 // Same colors and sweep as layout.py's severity gauge (HA success / warning / error).
 const SEVERITY_COLORS = { green: "#43A047", yellow: "#FFA600", red: "#DB4437" } as const;
+// Bright core on a near-black backing — same pair as layout.py's needle lines.
+const NEEDLE_COLOR = "#FFFFFF";
+const NEEDLE_BACKING_COLOR = "#111827";
 const GAUGE_SWEEP = 270;
 // conic-gradient 0° is 12 o'clock. The gauge starts at openHASP 135° (lower left),
 // which is 225° clockwise from 12 o'clock.
@@ -289,7 +292,10 @@ export class Dash480PreviewCanvas extends LitElement {
                   ? html`
                       <div class="gauge-wrap">
                         <div class="gauge-face" style="background: ${severityGradient(gaugeBands, gaugeMin, gaugeMax)}"></div>
-                        <div class="gauge-needle" style="transform: rotate(${needleDeg}deg)"></div>
+                        <div class="gauge-needle" style="transform: rotate(${needleDeg}deg); background: ${NEEDLE_BACKING_COLOR}">
+                          <div class="gauge-needle-core" style="background: ${NEEDLE_COLOR}"></div>
+                        </div>
+                        <div class="gauge-hub" style="background: ${NEEDLE_COLOR}; box-shadow: 0 0 0 2px ${NEEDLE_BACKING_COLOR}"></div>
                         <div class="gauge-value">${gaugeText}</div>
                       </div>
                     `
@@ -484,12 +490,31 @@ export class Dash480PreviewCanvas extends LitElement {
       position: absolute;
       left: 50%;
       bottom: 50%;
-      width: 2px;
-      height: 44%;
-      margin-left: -1px;
-      background: #111827;
-      border-radius: 1px;
+      width: 12px;
+      height: 50%;
+      margin-left: -6px;
+      border-radius: 6px;
       transform-origin: center bottom;
+      z-index: 1;
+    }
+    .gauge-needle-core {
+      position: absolute;
+      left: 2px;
+      right: 2px;
+      top: 2px;
+      bottom: 0;
+      border-radius: 4px;
+    }
+    .gauge-hub {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 8px;
+      height: 8px;
+      margin-left: -4px;
+      margin-top: -4px;
+      border-radius: 50%;
+      z-index: 2;
     }
     .gauge-value {
       position: absolute;
@@ -499,6 +524,7 @@ export class Dash480PreviewCanvas extends LitElement {
       text-align: center;
       font-size: 11px;
       line-height: 1.2;
+      z-index: 3;
     }
     .resize-handle {
       position: absolute;
