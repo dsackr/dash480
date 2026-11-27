@@ -21,6 +21,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN
+from .layout import normalize_tile
 
 STORAGE_VERSION = 1
 STORAGE_KEY = f"{DOMAIN}_pages"
@@ -108,7 +109,7 @@ class VisualPagesStore:
             "title": title,
             "columns": columns,
             "rows": rows,
-            "tiles": tiles or [],
+            "tiles": _normalized_tiles(tiles),
         }
         self._pages.append(page)
         await self._async_save()
@@ -118,7 +119,10 @@ class VisualPagesStore:
         page = self.get_page(page_id)
         if page is None:
             return None
-        page.update({k: v for k, v in patch.items() if k not in ("id", "panel_entry_id")})
+        patch = {k: v for k, v in patch.items() if k not in ("id", "panel_entry_id")}
+        if isinstance(patch.get("tiles"), list):
+            patch["tiles"] = _normalized_tiles(patch["tiles"])
+        page.update(patch)
         await self._async_save()
         return page
 
@@ -137,6 +141,18 @@ class VisualPagesStore:
             if page is not None:
                 page["page_order"] = order
         await self._async_save()
+
+
+def _normalized_tiles(tiles: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Normalize gauge `severity` on the way into storage so it round-trips.
+
+    Websocket page create/update hand tiles through as free-form dicts
+    (`dash480/pages/update`'s `tiles` schema). Gauge severity is the one
+    field with a shape worth canonicalizing — unknown keys and non-numeric
+    levels are dropped, and an empty map is removed so the tile renders as
+    a plain gauge. Every other tile field is left untouched.
+    """
+    return [normalize_tile(tile) if isinstance(tile, dict) else tile for tile in (tiles or [])]
 
 
 def async_get_store(hass: HomeAssistant) -> VisualPagesStore:

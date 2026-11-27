@@ -3,6 +3,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import type {
   CompatibleEntity,
   HomeAssistant,
+  GaugeSeverity,
   IconChoice,
   Selection,
   TileType,
@@ -256,6 +257,7 @@ export class Dash480Inspector extends LitElement {
     delete updated.min;
     delete updated.max;
     delete updated.icon;
+    delete updated.severity;
     this._emit("tile-changed", { tile: updated });
     // Then check the kept entity against the new type's compatible list; the
     // follow-up edit re-reads the tile's *current* state so it preserves any
@@ -305,6 +307,30 @@ export class Dash480Inspector extends LitElement {
     }
     this._rangeError = "";
     this._emit("tile-changed", { tile: { ...tile, min, max } });
+  }
+
+  private _changeSeverity(tile: VisualTile, key: keyof GaugeSeverity, e: Event) {
+    const input = e.target as HTMLInputElement;
+    const raw = input.value.trim();
+    const severity: GaugeSeverity = { ...(tile.severity ?? {}) };
+    if (raw === "") {
+      delete severity[key];
+    } else {
+      const value = Number(raw);
+      if (!Number.isFinite(value)) {
+        const previous = tile.severity?.[key];
+        input.value = previous === undefined ? "" : String(previous);
+        return;
+      }
+      severity[key] = value;
+    }
+    const updated: VisualTile = { ...tile };
+    if (severity.green === undefined && severity.yellow === undefined && severity.red === undefined) {
+      delete updated.severity;
+    } else {
+      updated.severity = severity;
+    }
+    this._emit("tile-changed", { tile: updated });
   }
 
   private _changeSpan(tile: VisualTile, field: "rs" | "cs", delta: number) {
@@ -397,6 +423,27 @@ export class Dash480Inspector extends LitElement {
               </label>
             </div>
             ${this._rangeError ? html`<div class="error">${this._rangeError}</div>` : nothing}
+            <div class="severity">
+              <span class="severity-title">Severity bands</span>
+              ${(["green", "yellow", "red"] as const).map(
+                (key) => html`
+                  <label class="field">
+                    <span><i class="swatch ${key}"></i>${key[0].toUpperCase()}${key.slice(1)} from</span>
+                    <input
+                      type="number"
+                      step="any"
+                      .value=${tile.severity?.[key] === undefined ? "" : String(tile.severity[key])}
+                      @change=${(e: Event) => this._changeSeverity(tile, key, e)}
+                    />
+                  </label>
+                `,
+              )}
+              <div class="hint">
+                Each color runs from its value up to the next, around the gauge. Leave a field blank to skip
+                it. Low-to-high (waste drawer) and high-to-low (salt level) both work. Clear all three for a
+                single-color arc.
+              </div>
+            </div>
           `
         : nothing}
       ${tile.type === "entity"
@@ -551,6 +598,31 @@ export class Dash480Inspector extends LitElement {
       font-size: 12px;
       color: #f87171;
       line-height: 1.4;
+    }
+    .severity {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .severity-title {
+      font-size: 12px;
+      opacity: 0.7;
+    }
+    .swatch {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 6px;
+    }
+    .swatch.green {
+      background: #43a047;
+    }
+    .swatch.yellow {
+      background: #ffa600;
+    }
+    .swatch.red {
+      background: #db4437;
     }
     .remove {
       margin-top: 4px;

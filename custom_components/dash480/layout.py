@@ -12,6 +12,8 @@ running instance.
 """
 from __future__ import annotations
 
+import json
+import math
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -114,6 +116,218 @@ def gauge_arc_value(state: Any, gmin: float, gmax: float) -> float:
         except (TypeError, ValueError):
             pass
     return gmin
+
+
+# Home Assistant Lovelace gauge `severity` colors: success / warning / error.
+# `--error-color` (#DB4437) is the red-orange HA uses for the `red` band.
+GAUGE_SEVERITY_COLORS = {
+    "green": "#43A047",
+    "yellow": "#FFA600",
+    "red": "#DB4437",
+}
+GAUGE_SEVERITY_KEYS = ("green", "yellow", "red")
+# Near-black reads on all three band colors, matching HA's needle gauge.
+GAUGE_NEEDLE_COLOR = "#111827"
+
+# Classic openHASP gauge sweep: 135° (lower left) clockwise 270° to 45°
+# (lower right). 0° is 3 o'clock and angles increase clockwise, so screen
+# y grows with sin(angle).
+GAUGE_START_ANGLE = 135
+GAUGE_SWEEP = 270
+
+# Per severity gauge, within TILE_ID_BUDGET (base .. base+7):
+# base title, base+1 card, base+2..+4 band arcs, base+5 needle, base+6 value.
+GAUGE_BAND_ID_OFFSETS = (2, 3, 4)
+GAUGE_NEEDLE_ID_OFFSET = 5
+GAUGE_VALUE_ID_OFFSET = 6
+
+
+def _json_number(value: float) -> int | float:
+    if value.is_integer() and abs(value) < 2**53:
+        return int(value)
+    return value
+
+
+def normalize_gauge_severity(severity: Any) -> dict[str, int | float] | None:
+    """Canonical `{green, yellow, red}` map, or None when nothing usable remains.
+
+    Unknown keys and non-numeric values are dropped. Key order is the HA
+    order (green, yellow, red), not threshold order — rendering sorts by
+    value so inverted maps (red below green) still work. Whole numbers stay
+    ints so a saved page doesn't grow `.0` suffixes.
+    """
+    if not isinstance(severity, dict):
+        return None
+    by_key: dict[str, Any] = {}
+    for key, raw in severity.items():
+        if isinstance(raw, bool) or raw is None or raw == "":
+            continue
+        name = str(key).lower()
+        if name in GAUGE_SEVERITY_COLORS and name not in by_key:
+            by_key[name] = raw
+    cleaned: dict[str, int | float] = {}
+    for key in GAUGE_SEVERITY_KEYS:
+        if key not in by_key:
+            continue
+        try:
+            cleaned[key] = _json_number(float(by_key[key]))
+        except (TypeError, ValueError):
+            continue
+    return cleaned or None
+
+
+def normalize_tile(tile: dict) -> dict:
+    """Copy a gauge tile with its `severity` map normalized. Other tiles pass through.
+
+    Empty or invalid severity is removed so the renderer falls back to the
+    single-color arc. Called from pages_store on create and update.
+    """
+    if not isinstance(tile, dict) or tile.get("type") != "gauge" or "severity" not in tile:
+        return tile
+    tile = dict(tile)
+    cleaned = normalize_gauge_severity(tile.get("severity"))
+    if cleaned:
+        tile["severity"] = cleaned
+    else:
+        tile.pop("severity", None)
+    return tile
+
+
+def gauge_value_angle(value: float, gmin: float, gmax: float) -> float:
+    """openHASP angle (degrees, clockwise from 3 o'clock) for `value` on the gauge sweep."""
+    span = gmax - gmin
+    if span <= 0:
+        frac = 0.0
+    else:
+        frac = (float(value) - gmin) / span
+    frac = min(1.0, max(0.0, frac))
+    return (GAUGE_START_ANGLE + frac * GAUGE_SWEEP) % 360.0
+
+
+@dataclass(frozen=True)
+class GaugeBand:
+    """One colored slice of a severity gauge, in threshold order."""
+
+    key: str
+    color: str
+    start_value: float
+    end_value: float
+    start_angle: int
+    end_angle: int
+
+
+def gauge_severity_bands(severity: Any, gmin: float, gmax: float) -> list[GaugeBand]:
+    """Severity bands across [gmin, gmax], matching HA's gauge severity semantics.
+
+    Each recognized key colors the range from its threshold up to the next
+    higher threshold (or `gmax` for the last). Thresholds are sorted by value,
+    so `{red: 0, yellow: 3, green: 10}` and `{green: 0, yellow: 50, red: 80}`
+    both work, as does any subset of the three keys. A leading gap (the first
+    threshold above `gmin`) is left uncolored — the tile background shows
+    through — because a fourth arc would not fit in the tile id budget.
+    Zero-width slices (duplicate thresholds, or a threshold at/above `gmax`)
+    are omitted. Returns [] when severity is missing or has no usable keys,
+    which the renderer treats as a plain single-color gauge.
+    """
+    cleaned = normalize_gauge_severity(severity)
+    if not cleaned or gmax <= gmin:
+        return []
+    points = sorted((float(level), key) for key, level in cleaned.items())
+    bands: list[GaugeBand] = []
+    for index, (level, key) in enumerate(points):
+        start = min(gmax, max(gmin, level))
+        if index + 1 < len(points):
+            end = min(gmax, max(gmin, points[index + 1][0]))
+        else:
+            end = gmax
+        if end <= start:
+            continue
+        start_angle = int(round(gauge_value_angle(start, gmin, gmax))) % 360
+        end_angle = int(round(gauge_value_angle(end, gmin, gmax))) % 360
+        if start_angle == end_angle:
+            continue
+        bands.append(GaugeBand(
+            key=key,
+            color=GAUGE_SEVERITY_COLORS[key],
+            start_value=start,
+            end_value=end,
+            start_angle=start_angle,
+            end_angle=end_angle,
+        ))
+    return bands
+
+
+def gauge_needle_points(
+    center_x: float,
+    center_y: float,
+    inner_radius: float,
+    outer_radius: float,
+    value: float,
+    gmin: float,
+    gmax: float,
+) -> list[list[int]]:
+    """Line endpoints (object-local pixels) for the needle at `value`.
+
+    openHASP `line` points are relative to the line object. 0° points right
+    and angles increase clockwise, which is `x + r*cos`, `y + r*sin` in
+    screen space (y grows downward).
+    """
+    angle = math.radians(gauge_value_angle(value, gmin, gmax))
+    cos_a = math.cos(angle)
+    sin_a = math.sin(angle)
+    return [
+        [int(round(center_x + inner_radius * cos_a)), int(round(center_y + inner_radius * sin_a))],
+        [int(round(center_x + outer_radius * cos_a)), int(round(center_y + outer_radius * sin_a))],
+    ]
+
+
+@dataclass(frozen=True)
+class GaugeTarget:
+    """One gauge tile's live-update target.
+
+    A plain gauge sets `arc_id` (the single arc's `.val`). A severity gauge
+    sets `needle_id` plus the line object's local geometry; its band arcs are
+    static and are not updated when the sensor changes.
+    """
+
+    page: int
+    label_id: int
+    gmin: float
+    gmax: float
+    arc_id: int | None = None
+    needle_id: int | None = None
+    center_x: float = 0.0
+    center_y: float = 0.0
+    inner_radius: float = 0.0
+    outer_radius: float = 0.0
+
+
+def gauge_live_updates(target: GaugeTarget, state: Any) -> list[tuple[str, str]]:
+    """MQTT command suffixes and payloads for one gauge after a state change.
+
+    Suffixes are relative to `hasp/<node>/command/` (for example `p2b5.points`).
+    The needle payload is an openHASP `points` JSON array. The value label is
+    always published; a plain gauge also publishes the arc `.val`.
+    """
+    clamped = gauge_arc_value(state, target.gmin, target.gmax)
+    updates: list[tuple[str, str]] = []
+    if target.arc_id is not None:
+        updates.append((f"p{target.page}b{target.arc_id}.val", str(clamped)))
+    if target.needle_id is not None:
+        points = gauge_needle_points(
+            target.center_x, target.center_y, target.inner_radius, target.outer_radius,
+            clamped, target.gmin, target.gmax,
+        )
+        updates.append((
+            f"p{target.page}b{target.needle_id}.points",
+            json.dumps(points, separators=(",", ":")),
+        ))
+    updates.append((f"p{target.page}b{target.label_id}.text", gauge_display_value(state)))
+    return updates
+
+
+def _gauge_stroke(arc_size: int) -> int:
+    return max(6, min(18, arc_size // 8))
 
 
 # MDI codepoints (from openHASP's font reference) for HA's standard weather
@@ -406,10 +620,10 @@ class PageRender:
     matrix_map: dict[str, dict] = field(default_factory=dict)
     fan_status_map: dict[str, list[tuple[int, tuple[str, int]]]] = field(default_factory=dict)
     option_specs: list[dict] = field(default_factory=list)
-    # entity -> list of (page, arc_id, value_label_id, min, max) — a gauge
-    # tile's live-update needs both the arc's .val and the label's .text
-    # kept in sync, unlike a plain sensor tile's single .text update.
-    gauge_map: dict[str, list[tuple[int, int, int, float, float]]] = field(default_factory=dict)
+    # entity -> gauge live-update targets. A plain gauge publishes the arc's
+    # .val; a severity gauge publishes the needle line's .points. Both also
+    # publish the value label's .text. Band arcs are static.
+    gauge_map: dict[str, list[GaugeTarget]] = field(default_factory=dict)
     # entity -> list of (page, icon_label_id, temp_label_id) — a weather
     # tile's live-update needs both the condition icon and the temperature
     # text kept in sync, same shape as gauge_map.
@@ -804,6 +1018,98 @@ def tile_base_id(tile_index: int) -> int:
     return 1 + tile_index * TILE_ID_BUDGET
 
 
+def _render_gauge(
+    out: "PageRender",
+    page: int,
+    base: int,
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    ent: str,
+    st: Any,
+    tile: dict,
+    palette: dict,
+) -> None:
+    """Append a gauge tile: a severity needle gauge, or the plain single arc.
+
+    The needle gauge is three stacked openHASP arcs (one per severity band,
+    each spanning its share of the 270° sweep) plus a `line` needle and the
+    value label. That is 7 objects with the card background and title already
+    drawn by the caller: base+1 card, base title, base+2..+4 bands, base+5
+    needle, base+6 value — inside TILE_ID_BUDGET. Bands are fully filled
+    (`val` at max) and colored on both the background stroke (`line_color`)
+    and the indicator stroke (`line_color10`); openHASP 0.7 paints an arc
+    with those properties, not `arc_color`.
+
+    Tiles with no usable `severity` keep the original single arc so existing
+    gauges look the same.
+    """
+    gmin = float(tile.get("min", 0))
+    gmax = float(tile.get("max", 100))
+    if gmax <= gmin:
+        gmax = gmin + 1  # defensive: never emit a zero/negative arc span
+    val = gauge_arc_value(st, gmin, gmax)
+
+    arc_size = max(40, min(w, h - 34) - 20)
+    arc_x = x + (w - arc_size) // 2
+    arc_y = y + 34
+    bands = gauge_severity_bands(tile.get("severity"), gmin, gmax)
+
+    if not bands:
+        arc_id = base + 2
+        out.objects.append({"page": page, "obj": "arc", "id": arc_id, "x": arc_x, "y": arc_y,
+                             "w": arc_size, "h": arc_size, "min": gmin, "max": gmax, "val": val,
+                             "start_angle": GAUGE_START_ANGLE,
+                             "end_angle": (GAUGE_START_ANGLE + GAUGE_SWEEP) % 360, "rotation": 0,
+                             "type": "normal", "arc_color": palette["gauge_arc"],
+                             "bg_color": palette["gauge_track"]})
+        value_label_id = base + 3
+        out.objects.append({"page": page, "obj": "label", "id": value_label_id, "x": arc_x,
+                             "y": arc_y + arc_size // 2 - 14, "w": arc_size, "h": 28,
+                             "text": gauge_display_value(st), "text_font": 24, "align": "center",
+                             "text_color": palette["text"], "bg_opa": 0, "mode": "dots"})
+        out.gauge_map.setdefault(ent, []).append(GaugeTarget(
+            page=page, label_id=value_label_id, gmin=gmin, gmax=gmax, arc_id=arc_id,
+        ))
+        return
+
+    stroke = _gauge_stroke(arc_size)
+    for band, offset in zip(bands, GAUGE_BAND_ID_OFFSETS):
+        out.objects.append({
+            "page": page, "obj": "arc", "id": base + offset, "x": arc_x, "y": arc_y,
+            "w": arc_size, "h": arc_size, "min": 0, "max": 100, "val": 100,
+            "start_angle": band.start_angle, "end_angle": band.end_angle,
+            "start_angle10": band.start_angle, "end_angle10": band.end_angle,
+            "rotation": 0, "type": 0, "adjustable": False,
+            "line_width": stroke, "line_width10": stroke,
+            "line_color": band.color, "line_color10": band.color,
+            "line_rounded": 0, "bg_opa": 0, "border_side": 0, "click": False,
+        })
+
+    center = arc_size / 2.0
+    inner_radius = arc_size * 0.12
+    outer_radius = max(inner_radius + 4, center - stroke / 2.0)
+    needle_id = base + GAUGE_NEEDLE_ID_OFFSET
+    points = gauge_needle_points(center, center, inner_radius, outer_radius, val, gmin, gmax)
+    out.objects.append({
+        "page": page, "obj": "line", "id": needle_id, "x": arc_x, "y": arc_y,
+        "w": arc_size, "h": arc_size, "points": points, "auto_size": 0, "y_invert": 0,
+        "line_width": max(2, arc_size // 28), "line_color": GAUGE_NEEDLE_COLOR,
+        "line_rounded": 1, "click": False,
+    })
+
+    value_label_id = base + GAUGE_VALUE_ID_OFFSET
+    out.objects.append({"page": page, "obj": "label", "id": value_label_id, "x": arc_x,
+                         "y": arc_y + int(arc_size * 0.58), "w": arc_size, "h": 28,
+                         "text": gauge_display_value(st), "text_font": 20, "align": "center",
+                         "text_color": palette["text"], "bg_opa": 0, "mode": "dots"})
+    out.gauge_map.setdefault(ent, []).append(GaugeTarget(
+        page=page, label_id=value_label_id, gmin=gmin, gmax=gmax, needle_id=needle_id,
+        center_x=center, center_y=center, inner_radius=inner_radius, outer_radius=outer_radius,
+    ))
+
+
 def render_tile_page(
     page: int,
     page_item: dict,
@@ -850,26 +1156,7 @@ def render_tile_page(
                              "text_color": palette["label"], "bg_opa": 0, "mode": "dots"})
 
         if tile_type == "gauge":
-            gmin = float(tile.get("min", 0))
-            gmax = float(tile.get("max", 100))
-            if gmax <= gmin:
-                gmax = gmin + 1  # defensive: never emit a zero/negative arc span
-            val = gauge_arc_value(st, gmin, gmax)
-
-            arc_size = max(40, min(w, h - 34) - 20)
-            arc_x = x + (w - arc_size) // 2
-            arc_y = y + 34
-            arc_id = base + 2
-            out.objects.append({"page": page, "obj": "arc", "id": arc_id, "x": arc_x, "y": arc_y,
-                                 "w": arc_size, "h": arc_size, "min": gmin, "max": gmax, "val": val,
-                                 "start_angle": 135, "end_angle": 45, "rotation": 0, "type": "normal",
-                                 "arc_color": palette["gauge_arc"], "bg_color": palette["gauge_track"]})
-            value_label_id = base + 3
-            out.objects.append({"page": page, "obj": "label", "id": value_label_id, "x": arc_x,
-                                 "y": arc_y + arc_size // 2 - 14, "w": arc_size, "h": 28,
-                                 "text": gauge_display_value(st), "text_font": 24, "align": "center",
-                                 "text_color": palette["text"], "bg_opa": 0, "mode": "dots"})
-            out.gauge_map.setdefault(ent, []).append((page, arc_id, value_label_id, gmin, gmax))
+            _render_gauge(out, page, base, x, y, w, h, ent, st, tile, palette)
             continue
 
         if tile_type == "weather":

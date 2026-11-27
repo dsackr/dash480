@@ -18,6 +18,15 @@ export interface Panel {
   title: string;
 }
 
+// Home Assistant Lovelace gauge `severity`: each color starts at its value
+// and runs up to the next higher threshold. Any subset is valid, and the
+// numbers may ascend (green → red) or descend (red → green).
+export interface GaugeSeverity {
+  green?: number;
+  yellow?: number;
+  red?: number;
+}
+
 export interface VisualTile {
   id: string;
   type: TileType;
@@ -29,6 +38,7 @@ export interface VisualTile {
   icon?: string;
   min?: number;
   max?: number;
+  severity?: GaugeSeverity;
 }
 
 export interface VisualPage {

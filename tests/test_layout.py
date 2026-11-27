@@ -448,5 +448,241 @@ class RenderTilePageTests(unittest.TestCase):
         self.assertLess(bases[-1] + layout.TILE_ID_BUDGET - 1, 193)
 
 
+class GaugeSeverityTests(unittest.TestCase):
+    def test_litter_waste_bands_are_green_yellow_red(self):
+        bands = layout.gauge_severity_bands({"green": 0, "yellow": 50, "red": 80}, 0, 100)
+        self.assertEqual([(b.key, b.start_value, b.end_value, b.start_angle, b.end_angle) for b in bands], [
+            ("green", 0, 50, 135, 270),
+            ("yellow", 50, 80, 270, 351),
+            ("red", 80, 100, 351, 45),
+        ])
+        self.assertEqual([b.color for b in bands], [
+            layout.GAUGE_SEVERITY_COLORS["green"],
+            layout.GAUGE_SEVERITY_COLORS["yellow"],
+            layout.GAUGE_SEVERITY_COLORS["red"],
+        ])
+
+    def test_inverted_salt_bands_put_red_at_the_low_end(self):
+        bands = layout.gauge_severity_bands({"red": 0, "yellow": 3, "green": 10}, 0, 18)
+        self.assertEqual([(b.key, b.start_value, b.end_value, b.start_angle, b.end_angle) for b in bands], [
+            ("red", 0, 3, 135, 180),
+            ("yellow", 3, 10, 180, 285),
+            ("green", 10, 18, 285, 45),
+        ])
+
+    def test_subset_and_unsorted_keys(self):
+        only_red = layout.gauge_severity_bands({"red": 80}, 0, 100)
+        self.assertEqual([(b.key, b.start_value, b.end_value) for b in only_red], [("red", 80, 100)])
+        # Leading gap (nothing from 0 to 20) stays uncolored — no extra band.
+        gapped = layout.gauge_severity_bands({"red": 80, "green": 20}, 0, 100)
+        self.assertEqual([(b.key, b.start_value, b.end_value) for b in gapped], [
+            ("green", 20, 80),
+            ("red", 80, 100),
+        ])
+
+    def test_invalid_entries_are_ignored(self):
+        bands = layout.gauge_severity_bands(
+            {"green": 0, "yellow": "nope", "red": None, "blue": 10, "orange": 40}, 0, 100
+        )
+        self.assertEqual([b.key for b in bands], ["green"])
+        self.assertEqual(bands[0].end_value, 100)
+        self.assertEqual(layout.gauge_severity_bands(None, 0, 100), [])
+        self.assertEqual(layout.gauge_severity_bands({}, 0, 100), [])
+        self.assertEqual(layout.gauge_severity_bands({"red": True}, 0, 100), [])
+
+    def test_thresholds_outside_the_range_collapse(self):
+        # Below min clamps to the start; at/above max has no width and is dropped.
+        bands = layout.gauge_severity_bands({"green": -10, "yellow": 50, "red": 150}, 0, 100)
+        self.assertEqual([(b.key, b.start_value, b.end_value) for b in bands], [
+            ("green", 0, 50),
+            ("yellow", 50, 100),
+        ])
+
+    def test_duplicate_thresholds_drop_the_zero_width_slice(self):
+        bands = layout.gauge_severity_bands({"green": 50, "yellow": 50, "red": 80}, 0, 100)
+        self.assertEqual([(b.key, b.start_value, b.end_value) for b in bands], [
+            ("yellow", 50, 80),
+            ("red", 80, 100),
+        ])
+
+    def test_needle_points_follow_the_sweep(self):
+        # Mid-scale (50 of 0..100) is openHASP 270°, straight up: tip above the hub.
+        up = layout.gauge_needle_points(50, 50, 10, 40, 50, 0, 100)
+        self.assertEqual(up[1][0], 50)
+        self.assertLess(up[1][1], 50)
+        # Minimum parks at 135°, down-left.
+        low = layout.gauge_needle_points(50, 50, 10, 40, 0, 0, 100)
+        self.assertLess(low[1][0], 50)
+        self.assertGreater(low[1][1], 50)
+        # Maximum is 45°, down-right.
+        high = layout.gauge_needle_points(50, 50, 10, 40, 100, 0, 100)
+        self.assertGreater(high[1][0], 50)
+        self.assertGreater(high[1][1], 50)
+
+    def test_normalize_severity_keeps_known_numeric_levels(self):
+        self.assertEqual(
+            layout.normalize_gauge_severity({"green": 0, "yellow": "50", "red": 80.5, "blue": 1, "Green": 9}),
+            {"green": 0, "yellow": 50, "red": 80.5},
+        )
+        self.assertIsNone(layout.normalize_gauge_severity({"blue": 1}))
+        self.assertIsNone(layout.normalize_gauge_severity("nope"))
+        tile = {"id": "t1", "type": "gauge", "entity_id": "sensor.waste", "min": 0, "max": 100,
+                "severity": {"red": "80", "green": 0, "yellow": 50, "nope": 1}}
+        normalized = layout.normalize_tile(tile)
+        self.assertEqual(normalized["severity"], {"green": 0, "yellow": 50, "red": 80})
+        self.assertEqual(normalized["entity_id"], "sensor.waste")
+        self.assertNotIn("severity", layout.normalize_tile({"type": "gauge", "severity": {"blue": 1}}))
+        entity = {"type": "entity", "entity_id": "switch.lamp"}
+        self.assertIs(layout.normalize_tile(entity), entity)
+
+
+class GaugeSeverityRenderTests(unittest.TestCase):
+    def setUp(self):
+        self.states = {"sensor.waste": fake_state("72", friendly_name="Zander Litter", unit_of_measurement="%")}
+
+    def lookup(self, entity_id):
+        return self.states.get(entity_id)
+
+    def _render(self, tile):
+        page = {"columns": 3, "rows": 2, "tiles": [tile]}
+        return layout.render_tile_page(2, page, self.lookup, layout.option_page_allocator(50))
+
+    def _litter_tile(self, **extra):
+        tile = {
+            "id": "t1", "type": "gauge", "entity_id": "sensor.waste", "row": 0, "col": 0,
+            "min": 0, "max": 100, "severity": {"green": 0, "yellow": 50, "red": 80},
+        }
+        tile.update(extra)
+        return tile
+
+    def test_severity_gauge_draws_three_bands_a_needle_and_the_value(self):
+        render = self._render(self._litter_tile())
+        for obj in render.objects:
+            json.dumps(obj)
+        self.assertEqual(len(render.objects), 7)
+        arcs = [o for o in render.objects if o.get("obj") == "arc"]
+        self.assertEqual([(a["line_color"], a["start_angle"], a["end_angle"]) for a in arcs], [
+            (layout.GAUGE_SEVERITY_COLORS["green"], 135, 270),
+            (layout.GAUGE_SEVERITY_COLORS["yellow"], 270, 351),
+            (layout.GAUGE_SEVERITY_COLORS["red"], 351, 45),
+        ])
+        for arc in arcs:
+            # Indicator stroke matches the band so the slice is solid whichever part openHASP paints.
+            self.assertEqual(arc["line_color10"], arc["line_color"])
+            self.assertEqual(arc["start_angle10"], arc["start_angle"])
+            self.assertEqual(arc["end_angle10"], arc["end_angle"])
+            self.assertEqual(arc["val"], 100)
+            self.assertFalse(arc["adjustable"])
+        needle = next(o for o in render.objects if o.get("obj") == "line")
+        self.assertEqual(needle["line_color"], layout.GAUGE_NEEDLE_COLOR)
+        self.assertEqual(needle["auto_size"], 0)
+        self.assertEqual(needle["y_invert"], 0)
+        label = next(o for o in render.objects if o.get("obj") == "label" and o.get("align") == "center")
+        self.assertEqual(label["text"], "72%")
+        target = render.gauge_map["sensor.waste"][0]
+        self.assertEqual(needle["points"], layout.gauge_needle_points(
+            target.center_x, target.center_y, target.inner_radius, target.outer_radius, 72, 0, 100,
+        ))
+        self.assertIsNone(target.arc_id)
+        self.assertEqual(target.needle_id, needle["id"])
+
+    def test_severity_objects_stay_inside_the_tile_id_budget(self):
+        render = self._render(self._litter_tile())
+        base = layout.tile_base_id(0)
+        ids = [o["id"] for o in render.objects]
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertTrue(all(base <= i <= base + layout.TILE_ID_BUDGET - 1 for i in ids))
+        self.assertLessEqual(max(ids), base + layout.GAUGE_VALUE_ID_OFFSET)
+        tiles = [
+            {"id": f"t{i}", "type": "gauge", "entity_id": "sensor.waste",
+             "row": 0, "col": 0, "severity": {"green": 0, "yellow": 50, "red": 80}}
+            for i in range(layout.MAX_TILES_PER_PAGE)
+        ]
+        full = layout.render_tile_page(
+            2, {"columns": 3, "rows": 2, "tiles": tiles}, self.lookup, layout.option_page_allocator(50),
+        )
+        self.assertLess(max(o["id"] for o in full.objects), 193)
+
+    def test_inverted_thresholds_render_red_then_green(self):
+        self.states["sensor.waste"] = fake_state("4", unit_of_measurement="in")
+        render = self._render({
+            "id": "t1", "type": "gauge", "entity_id": "sensor.waste", "row": 0, "col": 0,
+            "min": 0, "max": 18, "severity": {"red": 0, "yellow": 3, "green": 10},
+        })
+        arcs = [o for o in render.objects if o.get("obj") == "arc"]
+        self.assertEqual([a["line_color"] for a in arcs], [
+            layout.GAUGE_SEVERITY_COLORS["red"],
+            layout.GAUGE_SEVERITY_COLORS["yellow"],
+            layout.GAUGE_SEVERITY_COLORS["green"],
+        ])
+        self.assertEqual(arcs[0]["start_angle"], 135)
+        self.assertEqual(arcs[-1]["end_angle"], 45)
+        label = next(o for o in render.objects if o.get("obj") == "label" and o.get("align") == "center")
+        self.assertEqual(label["text"], "4in")
+
+    def test_unavailable_parks_the_needle_and_shows_dashes(self):
+        self.states["sensor.waste"] = fake_state("unavailable")
+        render = self._render(self._litter_tile())
+        needle = next(o for o in render.objects if o.get("obj") == "line")
+        target = render.gauge_map["sensor.waste"][0]
+        parked = layout.gauge_needle_points(
+            target.center_x, target.center_y, target.inner_radius, target.outer_radius, 0, 0, 100,
+        )
+        self.assertEqual(needle["points"], parked)
+        label = next(o for o in render.objects if o.get("obj") == "label" and o.get("align") == "center")
+        self.assertEqual(label["text"], "--")
+
+    def test_missing_severity_keeps_the_single_arc(self):
+        render = self._render({
+            "id": "t1", "type": "gauge", "entity_id": "sensor.waste", "row": 0, "col": 0,
+            "min": 0, "max": 100,
+        })
+        arcs = [o for o in render.objects if o.get("obj") == "arc"]
+        self.assertEqual(len(arcs), 1)
+        self.assertNotIn("line", {o.get("obj") for o in render.objects})
+        self.assertEqual(arcs[0]["arc_color"], layout.DARK_PALETTE["gauge_arc"])
+        self.assertEqual(arcs[0]["val"], 72)
+        target = render.gauge_map["sensor.waste"][0]
+        self.assertEqual(target.arc_id, arcs[0]["id"])
+        self.assertIsNone(target.needle_id)
+
+    def test_live_update_moves_the_needle_and_the_label(self):
+        render = self._render(self._litter_tile())
+        target = render.gauge_map["sensor.waste"][0]
+        low = dict(layout.gauge_live_updates(target, fake_state("40", unit_of_measurement="%")))
+        high = dict(layout.gauge_live_updates(target, fake_state("90", unit_of_measurement="%")))
+        points_key = f"p2b{target.needle_id}.points"
+        text_key = f"p2b{target.label_id}.text"
+        self.assertEqual(set(low), {points_key, text_key})
+        self.assertEqual(low[text_key], "40%")
+        self.assertEqual(high[text_key], "90%")
+        self.assertNotEqual(low[points_key], high[points_key])
+        self.assertEqual(
+            json.loads(high[points_key]),
+            layout.gauge_needle_points(
+                target.center_x, target.center_y, target.inner_radius, target.outer_radius, 90, 0, 100,
+            ),
+        )
+        unavailable = dict(layout.gauge_live_updates(target, fake_state("unavailable")))
+        self.assertEqual(unavailable[text_key], "--")
+        self.assertEqual(
+            json.loads(unavailable[points_key]),
+            layout.gauge_needle_points(
+                target.center_x, target.center_y, target.inner_radius, target.outer_radius, 0, 0, 100,
+            ),
+        )
+
+    def test_live_update_plain_gauge_still_publishes_arc_val(self):
+        render = self._render({
+            "id": "t1", "type": "gauge", "entity_id": "sensor.waste", "row": 0, "col": 0,
+            "min": 0, "max": 100,
+        })
+        target = render.gauge_map["sensor.waste"][0]
+        updates = dict(layout.gauge_live_updates(target, fake_state("72", unit_of_measurement="%")))
+        self.assertEqual(float(updates[f"p2b{target.arc_id}.val"]), 72)
+        self.assertEqual(updates[f"p2b{target.label_id}.text"], "72%")
+        self.assertFalse(any(key.endswith(".points") for key in updates))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,7 +1,58 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { PreviewTile, Selection, VisualPage, VisualTile } from "./types";
+import type { GaugeSeverity, PreviewTile, Selection, VisualPage, VisualTile } from "./types";
 import { DEVICE_PX, Rect, cellFromPoint, cellRect, fitsAt, occupiedCells, spanRect } from "./grid";
+
+// Same colors and sweep as layout.py's severity gauge (HA success / warning / error).
+const SEVERITY_COLORS = { green: "#43A047", yellow: "#FFA600", red: "#DB4437" } as const;
+const GAUGE_SWEEP = 270;
+// conic-gradient 0° is 12 o'clock. The gauge starts at openHASP 135° (lower left),
+// which is 225° clockwise from 12 o'clock.
+const GAUGE_CSS_FROM = 225;
+
+interface SeverityBand {
+  color: string;
+  start: number;
+  end: number;
+}
+
+function severityBands(severity: GaugeSeverity | undefined, min: number, max: number): SeverityBand[] {
+  if (!severity || !(max > min)) return [];
+  const points: { key: keyof typeof SEVERITY_COLORS; level: number }[] = [];
+  for (const key of ["green", "yellow", "red"] as const) {
+    const level = severity[key];
+    if (typeof level === "number" && Number.isFinite(level)) points.push({ key, level });
+  }
+  points.sort((a, b) => a.level - b.level);
+  const bands: SeverityBand[] = [];
+  for (let i = 0; i < points.length; i++) {
+    const start = Math.min(max, Math.max(min, points[i].level));
+    const end = i + 1 < points.length ? Math.min(max, Math.max(min, points[i + 1].level)) : max;
+    if (end > start) bands.push({ color: SEVERITY_COLORS[points[i].key], start, end });
+  }
+  return bands;
+}
+
+function severityGradient(bands: SeverityBand[], min: number, max: number): string {
+  const span = max - min;
+  const stops: string[] = [];
+  let cursor = 0;
+  for (const band of bands) {
+    const a = ((band.start - min) / span) * GAUGE_SWEEP;
+    const b = ((band.end - min) / span) * GAUGE_SWEEP;
+    if (a > cursor + 0.05) stops.push(`transparent ${cursor}deg ${a}deg`);
+    stops.push(`${band.color} ${a}deg ${b}deg`);
+    cursor = b;
+  }
+  if (cursor < 360) stops.push(`transparent ${cursor}deg 360deg`);
+  return `conic-gradient(from ${GAUGE_CSS_FROM}deg, ${stops.join(", ")})`;
+}
+
+function needleRotation(value: number, min: number, max: number): number {
+  const span = max - min;
+  const frac = span > 0 ? Math.min(1, Math.max(0, (value - min) / span)) : 0;
+  return ((135 + frac * GAUGE_SWEEP) % 360) - 270;
+}
 
 const DRAG_THRESHOLD_PX = 5;
 
@@ -198,14 +249,27 @@ export class Dash480PreviewCanvas extends LitElement {
     const isBattery = tile.entity_id?.toLowerCase().includes("battery") || t.friendly_name?.toLowerCase().includes("battery");
     const isClock = tile.type === "clock";
     let pct = 0;
+    let gaugeBands: SeverityBand[] = [];
+    let gaugeMin = 0;
+    let gaugeMax = 100;
+    let needleDeg = -135;
     if (isGauge) {
-      const min = tile.min ?? 0;
-      const max = tile.max ?? 100;
+      gaugeMin = tile.min ?? 0;
+      gaugeMax = tile.max ?? 100;
+      if (gaugeMax <= gaugeMin) gaugeMax = gaugeMin + 1;
       const raw = Number(t.state);
-      if (!Number.isNaN(raw) && max > min) {
-        pct = Math.max(0, Math.min(100, ((raw - min) / (max - min)) * 100));
+      const numeric = !Number.isNaN(raw);
+      if (numeric && gaugeMax > gaugeMin) {
+        pct = Math.max(0, Math.min(100, ((raw - gaugeMin) / (gaugeMax - gaugeMin)) * 100));
       }
+      gaugeBands = severityBands(tile.severity, gaugeMin, gaugeMax);
+      needleDeg = needleRotation(numeric ? raw : gaugeMin, gaugeMin, gaugeMax);
     }
+    const gaugeUnit = typeof t.attributes?.["unit_of_measurement"] === "string" ? t.attributes["unit_of_measurement"] : "";
+    const gaugeText =
+      t.state == null || t.state === "" || t.state === "unknown" || t.state === "unavailable"
+        ? "--"
+        : `${t.state}${gaugeUnit}`;
     const temp = t.attributes?.["temperature"];
     const tempUnit = t.attributes?.["temperature_unit"] ?? "";
     const missingEntity = !tile.entity_id;
@@ -221,11 +285,19 @@ export class Dash480PreviewCanvas extends LitElement {
           : html`
               <div class="tile-label">${t.friendly_name}</div>
               ${isGauge
-                ? html`
-                    <div class="gauge-ring" style="background: conic-gradient(#38bdf8 ${pct * 3.6}deg, #334155 0deg);">
-                      <div class="gauge-ring-inner">${t.state ?? "--"}</div>
-                    </div>
-                  `
+                ? gaugeBands.length
+                  ? html`
+                      <div class="gauge-wrap">
+                        <div class="gauge-face" style="background: ${severityGradient(gaugeBands, gaugeMin, gaugeMax)}"></div>
+                        <div class="gauge-needle" style="transform: rotate(${needleDeg}deg)"></div>
+                        <div class="gauge-value">${gaugeText}</div>
+                      </div>
+                    `
+                  : html`
+                      <div class="gauge-ring" style="background: conic-gradient(#38bdf8 ${pct * 3.6}deg, #334155 0deg);">
+                        <div class="gauge-ring-inner">${t.state ?? "--"}</div>
+                      </div>
+                    `
                 : isWeather
                   ? html`
                       <div class="weather-condition">${t.state ?? "--"}</div>
@@ -241,7 +313,7 @@ export class Dash480PreviewCanvas extends LitElement {
                       `
                     : isBattery
                       ? (() => {
-                          const val = parseInt(t.state) || 50;
+                          const val = parseInt(t.state ?? "", 10) || 50;
                           const pctVal = Math.max(0, Math.min(100, val));
                           const barW = Math.round((pctVal / 100) * 42);
                           const color = pctVal < 15 ? "#EF4444" : (pctVal < 50 ? "#F59E0B" : "#10B981");
@@ -393,6 +465,40 @@ export class Dash480PreviewCanvas extends LitElement {
       justify-content: center;
       font-size: 13px;
       text-align: center;
+    }
+    .gauge-wrap {
+      position: relative;
+      width: 74%;
+      max-width: 96px;
+      aspect-ratio: 1;
+      margin: 4px auto 0;
+    }
+    .gauge-face {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      -webkit-mask: radial-gradient(circle, transparent 52%, #000 53%);
+      mask: radial-gradient(circle, transparent 52%, #000 53%);
+    }
+    .gauge-needle {
+      position: absolute;
+      left: 50%;
+      bottom: 50%;
+      width: 2px;
+      height: 44%;
+      margin-left: -1px;
+      background: #111827;
+      border-radius: 1px;
+      transform-origin: center bottom;
+    }
+    .gauge-value {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 60%;
+      text-align: center;
+      font-size: 11px;
+      line-height: 1.2;
     }
     .resize-handle {
       position: absolute;
