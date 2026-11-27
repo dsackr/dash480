@@ -76,8 +76,7 @@ from .layout import (
     build_page_ring,
     display_state,
     format_calendar_summary,
-    gauge_arc_value,
-    gauge_display_value,
+    gauge_live_updates,
     header_footer_objects,
     home_fallback_objects,
     option_page_allocator,
@@ -533,7 +532,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         ent_matrix_map: dict[str, list[tuple[int, int, dict]]] = {}
         color_btn_map: dict[str, dict] = {}
         fan_status_map: dict[str, list[tuple[int, tuple[str, int]]]] = {}
-        gauge_map: dict[str, list[tuple[int, int, int, float, float]]] = {}
+        gauge_map: dict[str, list] = {}
         weather_map: dict[str, list[tuple[int, int, int]]] = {}
         camera_map: dict[str, list[tuple[int, int, str]]] = {}
         battery_map: dict[str, list[tuple[int, int, int]]] = {}
@@ -667,9 +666,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             unsub = async_track_state_change_event(hass, [ent], cb)
             hass.data[DOMAIN][entry.entry_id][f"unsub_sensor_{ent}"] = unsub
 
-        # rewire gauge listeners — a gauge needs both the arc's .val and the
-        # value label's .text kept in sync, unlike a plain sensor's single
-        # .text update, so it gets its own map/subscription pair.
+        # rewire gauge listeners. A plain gauge publishes the arc's .val; a
+        # severity gauge publishes the needle line's .points (band arcs stay
+        # put — they depend on min/max/severity, not the live value). Both
+        # publish the value label's .text.
         for key in list(hass.data[DOMAIN][entry.entry_id].keys()):
             if key.startswith("unsub_gauge_"):
                 u = hass.data[DOMAIN][entry.entry_id].pop(key)
@@ -681,12 +681,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             def _make_gauge_cb(eid: str):
                 async def _cb(event):
                     state = hass.states.get(eid)
-                    for (pnum, arc_id, label_id, gmin, gmax) in gauge_map.get(eid, []):
-                        val = gauge_arc_value(state, gmin, gmax)
-                        await mqtt.async_publish(hass, f"hasp/{node_name}/command/p{pnum}b{arc_id}.val", str(val))
-                        await mqtt.async_publish(
-                            hass, f"hasp/{node_name}/command/p{pnum}b{label_id}.text", gauge_display_value(state)
-                        )
+                    for target in gauge_map.get(eid, []):
+                        for suffix, payload in gauge_live_updates(target, state):
+                            await mqtt.async_publish(hass, f"hasp/{node_name}/command/{suffix}", payload)
                 return _cb
             cb = _make_gauge_cb(ent)
             unsub = async_track_state_change_event(hass, [ent], cb)
