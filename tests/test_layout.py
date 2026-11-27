@@ -4,6 +4,7 @@ Run with: python3 -m unittest discover -s tests -v
 No Home Assistant install required — layout.py is pure Python.
 """
 import json
+import math
 import sys
 import unittest
 from pathlib import Path
@@ -585,7 +586,7 @@ class GaugeSeverityRenderTests(unittest.TestCase):
         render = self._render(self._litter_tile())
         for obj in render.objects:
             json.dumps(obj)
-        self.assertEqual(len(render.objects), 7)
+        self.assertEqual(len(render.objects), 8)
         arcs = [o for o in render.objects if o.get("obj") == "arc"]
         self.assertEqual([(a["line_color"], a["start_angle"], a["end_angle"]) for a in arcs], [
             (layout.GAUGE_SEVERITY_COLORS["green"], 135, 270),
@@ -599,18 +600,46 @@ class GaugeSeverityRenderTests(unittest.TestCase):
             self.assertEqual(arc["end_angle10"], arc["end_angle"])
             self.assertEqual(arc["val"], 100)
             self.assertFalse(arc["adjustable"])
-        needle = next(o for o in render.objects if o.get("obj") == "line")
+        lines = [o for o in render.objects if o.get("obj") == "line"]
+        self.assertEqual(len(lines), 2)
+        backing, needle = lines  # backing is drawn first so the core paints on top
+        self.assertEqual(backing["line_color"], layout.GAUGE_NEEDLE_BACKING_COLOR)
         self.assertEqual(needle["line_color"], layout.GAUGE_NEEDLE_COLOR)
+        self.assertEqual(needle["line_color"], "#FFFFFF")
+        self.assertEqual(backing["line_color"], "#111827")
+        # Wider than the old hairline (arc_size // 28) and edged in a darker stroke.
+        self.assertGreater(needle["line_width"], max(2, arcs[0]["w"] // 28))
+        self.assertEqual(backing["line_width"], needle["line_width"] + 4)
+        self.assertLessEqual(backing["line_width"], arcs[0]["line_width"] + 4)
+        self.assertEqual(backing["points"], needle["points"])
         self.assertEqual(needle["auto_size"], 0)
+        self.assertEqual(backing["auto_size"], 0)
         self.assertEqual(needle["y_invert"], 0)
+        self.assertEqual(backing["y_invert"], 0)
+        self.assertEqual(needle["line_rounded"], 1)
+        self.assertEqual(backing["line_rounded"], 1)
+        # No widget box chrome — that would paint a rectangle, not a stroke halo.
+        for line in lines:
+            self.assertEqual(line["outline_width"], 0)
+            self.assertEqual(line["shadow_width"], 0)
+            self.assertEqual(line["bg_opa"], 0)
         label = next(o for o in render.objects if o.get("obj") == "label" and o.get("align") == "center")
         self.assertEqual(label["text"], "72%")
+        self.assertLess(render.objects.index(backing), render.objects.index(needle))
+        self.assertLess(render.objects.index(needle), render.objects.index(label))
         target = render.gauge_map["sensor.waste"][0]
         self.assertEqual(needle["points"], layout.gauge_needle_points(
             target.center_x, target.center_y, target.inner_radius, target.outer_radius, 72, 0, 100,
         ))
+        # Hub sits on the pivot; the tip's round cap reaches the band's outer rim.
+        self.assertEqual(needle["points"][0], [round(target.center_x), round(target.center_y)])
+        tip = needle["points"][1]
+        reach = math.hypot(tip[0] - target.center_x, tip[1] - target.center_y)
+        self.assertAlmostEqual(reach, target.outer_radius, delta=0.6)
+        self.assertGreater(reach + backing["line_width"] / 2, target.center_x - 1)
         self.assertIsNone(target.arc_id)
         self.assertEqual(target.needle_id, needle["id"])
+        self.assertEqual(target.backing_id, backing["id"])
 
     def test_severity_objects_stay_inside_the_tile_id_budget(self):
         render = self._render(self._litter_tile())
@@ -618,7 +647,8 @@ class GaugeSeverityRenderTests(unittest.TestCase):
         ids = [o["id"] for o in render.objects]
         self.assertEqual(len(ids), len(set(ids)))
         self.assertTrue(all(base <= i <= base + layout.TILE_ID_BUDGET - 1 for i in ids))
-        self.assertLessEqual(max(ids), base + layout.GAUGE_VALUE_ID_OFFSET)
+        self.assertLessEqual(len(ids), layout.TILE_ID_BUDGET)
+        self.assertEqual(max(ids), base + layout.GAUGE_NEEDLE_BACKING_ID_OFFSET)
         tiles = [
             {"id": f"t{i}", "type": "gauge", "entity_id": "sensor.waste",
              "row": 0, "col": 0, "severity": {"green": 0, "yellow": 50, "red": 80}}
@@ -649,12 +679,14 @@ class GaugeSeverityRenderTests(unittest.TestCase):
     def test_unavailable_parks_the_needle_and_shows_dashes(self):
         self.states["sensor.waste"] = fake_state("unavailable")
         render = self._render(self._litter_tile())
-        needle = next(o for o in render.objects if o.get("obj") == "line")
+        lines = [o for o in render.objects if o.get("obj") == "line"]
         target = render.gauge_map["sensor.waste"][0]
         parked = layout.gauge_needle_points(
             target.center_x, target.center_y, target.inner_radius, target.outer_radius, 0, 0, 100,
         )
-        self.assertEqual(needle["points"], parked)
+        self.assertEqual(len(lines), 2)
+        for line in lines:
+            self.assertEqual(line["points"], parked)
         label = next(o for o in render.objects if o.get("obj") == "label" and o.get("align") == "center")
         self.assertEqual(label["text"], "--")
 
@@ -671,15 +703,23 @@ class GaugeSeverityRenderTests(unittest.TestCase):
         target = render.gauge_map["sensor.waste"][0]
         self.assertEqual(target.arc_id, arcs[0]["id"])
         self.assertIsNone(target.needle_id)
+        self.assertIsNone(target.backing_id)
 
     def test_live_update_moves_the_needle_and_the_label(self):
         render = self._render(self._litter_tile())
         target = render.gauge_map["sensor.waste"][0]
-        low = dict(layout.gauge_live_updates(target, fake_state("40", unit_of_measurement="%")))
-        high = dict(layout.gauge_live_updates(target, fake_state("90", unit_of_measurement="%")))
+        low_updates = layout.gauge_live_updates(target, fake_state("40", unit_of_measurement="%"))
+        high_updates = layout.gauge_live_updates(target, fake_state("90", unit_of_measurement="%"))
+        low = dict(low_updates)
+        high = dict(high_updates)
         points_key = f"p2b{target.needle_id}.points"
+        backing_key = f"p2b{target.backing_id}.points"
         text_key = f"p2b{target.label_id}.text"
-        self.assertEqual(set(low), {points_key, text_key})
+        # Backing moves first, then the core, so the outline and the bright stroke stay paired.
+        self.assertEqual([key for key, _payload in low_updates], [backing_key, points_key, text_key])
+        self.assertEqual(set(low), {backing_key, points_key, text_key})
+        self.assertEqual(low[backing_key], low[points_key])
+        self.assertEqual(high[backing_key], high[points_key])
         self.assertEqual(low[text_key], "40%")
         self.assertEqual(high[text_key], "90%")
         self.assertNotEqual(low[points_key], high[points_key])
@@ -689,13 +729,17 @@ class GaugeSeverityRenderTests(unittest.TestCase):
                 target.center_x, target.center_y, target.inner_radius, target.outer_radius, 90, 0, 100,
             ),
         )
-        unavailable = dict(layout.gauge_live_updates(target, fake_state("unavailable")))
+        unavailable_updates = layout.gauge_live_updates(target, fake_state("unavailable"))
+        unavailable = dict(unavailable_updates)
         self.assertEqual(unavailable[text_key], "--")
+        parked = layout.gauge_needle_points(
+            target.center_x, target.center_y, target.inner_radius, target.outer_radius, 0, 0, 100,
+        )
+        self.assertEqual(json.loads(unavailable[points_key]), parked)
+        self.assertEqual(json.loads(unavailable[backing_key]), parked)
         self.assertEqual(
-            json.loads(unavailable[points_key]),
-            layout.gauge_needle_points(
-                target.center_x, target.center_y, target.inner_radius, target.outer_radius, 0, 0, 100,
-            ),
+            [key for key, _payload in unavailable_updates],
+            [backing_key, points_key, text_key],
         )
 
     def test_live_update_plain_gauge_still_publishes_arc_val(self):

@@ -667,9 +667,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass.data[DOMAIN][entry.entry_id][f"unsub_sensor_{ent}"] = unsub
 
         # rewire gauge listeners. A plain gauge publishes the arc's .val; a
-        # severity gauge publishes the needle line's .points (band arcs stay
-        # put — they depend on min/max/severity, not the live value). Both
-        # publish the value label's .text.
+        # severity gauge publishes the backing line's .points and then the
+        # needle core's .points (band arcs stay put — they depend on
+        # min/max/severity, not the live value). Both publish the value
+        # label's .text. The two point payloads are the same short array.
         for key in list(hass.data[DOMAIN][entry.entry_id].keys()):
             if key.startswith("unsub_gauge_"):
                 u = hass.data[DOMAIN][entry.entry_id].pop(key)
