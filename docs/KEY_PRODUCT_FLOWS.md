@@ -7,9 +7,9 @@ All contributors must keep this document up-to-date when introducing or modifyin
 ---
 
 ## 1. Panel Discovery & Configuration
-Allows the user to add a Dash480 panel configuration entry and customize the Node Name (MQTT topic identifier), Home Title, and Temperature Sensor entity for the panel header.
-- **Entry points**: `config_flow.py` (`Dash480ConfigFlow`), `__init__.py` (`_options_updated`).
-- **If it silently breaks**: Users cannot add panels, or changes to the Node Name, Home Title, or Temperature Sensor do not propagate to the header objects.
+Allows the user to add a Dash480 panel configuration entry and customize the Node Name (MQTT topic identifier) and Home Title. The header date and clock are openHASP templates drawn on the panel, not Home Assistant entities.
+- **Entry points**: `config_flow.py` (`Dash480ConfigFlow`), `__init__.py` (`_options_updated`), `layout.py` (`header_footer_objects`).
+- **If it silently breaks**: Users cannot add panels, or changes to the Node Name or Home Title do not propagate to the header. A publish of `p0b3.text` would also replace the clock.
 - **Test status**: **Gap** (tested manually).
 
 ## 2. Page Management (Add/Remove Page)
